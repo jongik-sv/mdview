@@ -1,0 +1,57 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- page surface: subtle top-to-bottom off-white gradient -->
+    <linearGradient id="paper" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef1f6"/>
+    </linearGradient>
+    <!-- folded corner shading -->
+    <linearGradient id="fold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#cdd5e2"/>
+      <stop offset="1" stop-color="#aab4c6"/>
+    </linearGradient>
+    <!-- accent for the markdown mark -->
+    <linearGradient id="accent" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5b6cff"/>
+      <stop offset="1" stop-color="#3d49d6"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="22" stdDeviation="34" flood-color="#0b1530" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <!-- Document sheet with a folded top-right corner.
+       Body outline goes clockwise; the corner at (724,140) is cut by the fold. -->
+  <g filter="url(#shadow)">
+    <path d="M252 96
+             h352
+             l168 168
+             v520
+             a40 40 0 0 1 -40 40
+             h-480
+             a40 40 0 0 1 -40 -40
+             V136
+             a40 40 0 0 1 40 -40 z"
+          fill="url(#paper)" stroke="#c2cad8" stroke-width="6"/>
+    <!-- the fold itself (triangle), drawn on top of the corner -->
+    <path d="M604 96 l168 168 h-128 a40 40 0 0 1 -40 -40 z"
+          fill="url(#fold)"/>
+  </g>
+
+  <!-- faint text lines (the "content" of the document) -->
+  <g fill="#c3ccdb">
+    <rect x="320" y="360" width="384" height="26" rx="13"/>
+    <rect x="320" y="424" width="312" height="26" rx="13"/>
+  </g>
+
+  <!-- markdown mark: rounded badge + "M" and a down arrow, in accent -->
+  <g>
+    <rect x="300" y="520" width="424" height="276" rx="48" fill="url(#accent)"/>
+    <g fill="#ffffff">
+      <!-- letter M -->
+      <path d="M360 730 V600 h48 l54 80 54 -80 h48 V730 h-48 V676 l-54 78 -54 -78 V730 z"/>
+      <!-- down arrow -->
+      <path d="M612 600 h44 V686 h40 l-62 74 -62 -74 h40 z"/>
+    </g>
+  </g>
+</svg>
