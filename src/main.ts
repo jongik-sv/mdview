@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
 import { openUrl, openPath } from '@tauri-apps/plugin-opener';
@@ -83,6 +83,27 @@ function resolveRelative(base: string | null, rel: string): string | null {
   }
   const joined = stack.join('/');
   return win ? joined.replace(/\//g, '\\') : joined;
+}
+
+/**
+ * Rewrite relative `<img src>` to a Tauri asset URL so local images render.
+ * Markdown emits `<img src="rel/path.png">`, which the WKWebView resolves
+ * against the `tauri://localhost` origin (a 404). Resolve each relative src
+ * against the active file's directory and convert it via the asset protocol.
+ * Absolute URLs (http:, https:, data:, asset:) are left untouched.
+ */
+function rewriteAssetSrcs(root: HTMLElement): void {
+  if (!isTauri) return;
+  root.querySelectorAll<HTMLImageElement>('img[src]').forEach((img) => {
+    const src = img.getAttribute('src');
+    if (!src) return;
+    // Real URL scheme (not a `C:\` drive prefix) → already loadable, skip.
+    if (/^[a-z][a-z0-9+.\-]*:/i.test(src) && !/^[a-z]:[\\/]/i.test(src)) return;
+    const isAbs = src.startsWith('/') || /^[a-z]:[\\/]/i.test(src);
+    const resolved = isAbs ? src : resolveRelative(activePath, src);
+    if (!resolved) return;
+    img.src = convertFileSrc(resolved);
+  });
 }
 
 content.addEventListener('click', (e) => {
@@ -656,6 +677,7 @@ async function renderActive(): Promise<void> {
   if (!tab) return;
   const { html, blocks } = renderMarkdown(tab.content);
   content.innerHTML = html;
+  rewriteAssetSrcs(content);
   tab.blocks = blocks;
   applyFontSize();
   await renderAllMermaid(blocks, effectiveTheme === 'dark' ? 'dark' : 'default');
