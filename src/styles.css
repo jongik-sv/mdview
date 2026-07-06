@@ -160,6 +160,17 @@ html[data-mdview-theme='dark'] .tab-active {
   background: rgba(128, 128, 128, 0.2);
 }
 
+/* Drag-to-reorder feedback */
+.tab-dragging {
+  opacity: 0.4;
+}
+.tab-drop-before {
+  box-shadow: inset 2px 0 0 0 #2f81f7;
+}
+.tab-drop-after {
+  box-shadow: inset -2px 0 0 0 #2f81f7;
+}
+
 /* Controls group (right side) */
 #controls {
   display: flex;

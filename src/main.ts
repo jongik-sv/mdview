@@ -628,6 +628,110 @@ function findTab(path: string): Tab | undefined {
   return tabs.find((t) => t.path === path);
 }
 
+// Drag-to-reorder state (pointer-based, see note where pointerdown is wired).
+let tabDrag: {
+  path: string; // tab being dragged
+  startX: number; // pointer x at pointerdown
+  moved: boolean; // crossed the drag threshold?
+} | null = null;
+// True right after a drag so the trailing click doesn't also activate the tab.
+let tabDragSuppressClick = false;
+const TAB_DRAG_THRESHOLD = 4; // px before a press becomes a drag
+
+function startTabDrag(e: PointerEvent, path: string): void {
+  // Fresh press: clear any stale suppress flag from a prior drag whose click
+  // never fired (pointerup landed on a different tab than pointerdown).
+  tabDragSuppressClick = false;
+  if (e.button !== 0) return; // left button only
+  // Let the close button handle its own clicks.
+  if ((e.target as HTMLElement).closest('.tab-close')) return;
+  tabDrag = { path, startX: e.clientX, moved: false };
+  window.addEventListener('pointermove', onTabDragMove);
+  window.addEventListener('pointerup', onTabDragEnd);
+}
+
+function onTabDragMove(e: PointerEvent): void {
+  if (!tabDrag) return;
+  if (!tabDrag.moved) {
+    if (Math.abs(e.clientX - tabDrag.startX) < TAB_DRAG_THRESHOLD) return;
+    tabDrag.moved = true;
+    const srcEl = tabBar.querySelector<HTMLElement>(
+      `.tab[data-path="${CSS.escape(tabDrag.path)}"]`,
+    );
+    srcEl?.classList.add('tab-dragging');
+  }
+  const hit = tabElAtX(e.clientX);
+  clearDropMarkers();
+  if (hit && hit.path !== tabDrag.path) {
+    const rect = hit.el.getBoundingClientRect();
+    const after = e.clientX > rect.left + rect.width / 2;
+    hit.el.classList.toggle('tab-drop-after', after);
+    hit.el.classList.toggle('tab-drop-before', !after);
+  }
+}
+
+function onTabDragEnd(e: PointerEvent): void {
+  window.removeEventListener('pointermove', onTabDragMove);
+  window.removeEventListener('pointerup', onTabDragEnd);
+  const drag = tabDrag;
+  tabDrag = null;
+  clearDropMarkers();
+  tabBar
+    .querySelector('.tab-dragging')
+    ?.classList.remove('tab-dragging');
+  if (!drag || !drag.moved) return; // was a plain click, not a drag
+  tabDragSuppressClick = true;
+  const hit = tabElAtX(e.clientX);
+  if (hit && hit.path !== drag.path) {
+    const rect = hit.el.getBoundingClientRect();
+    const after = e.clientX > rect.left + rect.width / 2;
+    reorderTabs(drag.path, hit.path, after);
+  }
+}
+
+// The tab element whose horizontal extent contains `clientX` (clamped to the
+// ends of the strip so dropping past the last tab lands at the edge).
+function tabElAtX(clientX: number): { path: string; el: HTMLElement } | null {
+  const els = Array.from(tabBar.querySelectorAll<HTMLElement>('.tab'));
+  if (els.length === 0) return null;
+  for (const el of els) {
+    const r = el.getBoundingClientRect();
+    if (clientX >= r.left && clientX <= r.right) {
+      return { path: el.dataset.path!, el };
+    }
+  }
+  const first = els[0];
+  if (clientX < first.getBoundingClientRect().left) {
+    return { path: first.dataset.path!, el: first };
+  }
+  const last = els[els.length - 1];
+  return { path: last.dataset.path!, el: last };
+}
+
+function clearDropMarkers(): void {
+  for (const el of tabBar.querySelectorAll('.tab-drop-before, .tab-drop-after')) {
+    el.classList.remove('tab-drop-before', 'tab-drop-after');
+  }
+}
+
+// Move `fromPath` so it lands relative to `toPath`. `insertAfter` decides which
+// side of the target it drops on (based on where in the target the cursor was).
+function reorderTabs(fromPath: string, toPath: string, insertAfter: boolean): void {
+  if (fromPath === toPath) return;
+  const fromIdx = tabs.findIndex((t) => t.path === fromPath);
+  if (fromIdx === -1) return;
+  const [moved] = tabs.splice(fromIdx, 1);
+  let toIdx = tabs.findIndex((t) => t.path === toPath);
+  if (toIdx === -1) {
+    // Target vanished mid-drag: put it back where it was.
+    tabs.splice(fromIdx, 0, moved);
+    return;
+  }
+  if (insertAfter) toIdx += 1;
+  tabs.splice(toIdx, 0, moved);
+  renderTabBar();
+}
+
 function renderTabBar(): void {
   tabBar.innerHTML = '';
   let activeEl: HTMLElement | null = null;
@@ -637,6 +741,11 @@ function renderTabBar(): void {
     el.className = 'tab' + (isActive ? ' tab-active' : '');
     if (isActive) activeEl = el;
     el.title = tab.path;
+    el.dataset.path = tab.path;
+    // Pointer-based drag-to-reorder. We deliberately avoid HTML5 draggable/DnD:
+    // the window has `dragDropEnabled` (OS-level file drop for opening .md), which
+    // swallows in-page HTML5 drag events on some platforms (notably Windows).
+    el.addEventListener('pointerdown', (e) => startTabDrag(e, tab.path));
 
     const title = document.createElement('span');
     title.className = 'tab-title';
@@ -653,7 +762,13 @@ function renderTabBar(): void {
 
     el.appendChild(title);
     el.appendChild(close);
-    el.addEventListener('click', () => void activate(tab.path));
+    el.addEventListener('click', () => {
+      if (tabDragSuppressClick) {
+        tabDragSuppressClick = false;
+        return; // this click is the tail of a drag — don't activate
+      }
+      void activate(tab.path);
+    });
     tabBar.appendChild(el);
   }
   // Keep the active tab visible when the strip overflows (open/switch scrolls to it).
