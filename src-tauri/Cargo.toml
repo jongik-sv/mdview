@@ -33,3 +33,12 @@ tauri-plugin-clipboard-manager = "2"
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 tauri-plugin-single-instance = "2"
 
+# PDF export drives the platform webview's native print-to-PDF directly (wry
+# does not expose one). Versions MUST track what wry itself uses, or the raw
+# pointer casts in export_pdf break.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-app-kit = { version = "0.3", features = ["NSPrintInfo", "NSPrintOperation"] }
+objc2-web-kit = { version = "0.3", features = ["WKWebView", "objc2-app-kit"] }
+

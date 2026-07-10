@@ -112,6 +112,73 @@ fn unwatch_file(path: String, state: tauri::State<AppState>) {
     state.watchers.lock().unwrap().remove(&path);
 }
 
+/// Event payload for `pdf-exported`.
+#[derive(Clone, Serialize)]
+struct PdfPayload {
+    ok: bool,
+    path: String,
+    error: Option<String>,
+}
+
+/// Save the current webview content as a paginated PDF at `dest`, without any
+/// print dialog. Completion is reported via the `pdf-exported` event because
+/// the Windows implementation is asynchronous; macOS emits it synchronously.
+#[tauri::command]
+fn export_pdf(dest: String, window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let app = window.app_handle().clone();
+        let dest2 = dest.clone();
+        window
+            .with_webview(move |wv| {
+                use objc2::rc::Retained;
+                use objc2::runtime::ProtocolObject;
+                use objc2_app_kit::{NSPrintInfo, NSPrintJobSavingURL, NSPrintSaveJob};
+                use objc2_foundation::{NSCopying, NSString, NSURL};
+                use objc2_web_kit::WKWebView;
+
+                let result: Result<(), String> = (|| unsafe {
+                    let webview: &WKWebView = &*(wv.inner() as *const WKWebView);
+                    let info: Retained<NSPrintInfo> = NSPrintInfo::sharedPrintInfo().copy();
+                    info.setJobDisposition(NSPrintSaveJob);
+                    let url = NSURL::fileURLWithPath(&NSString::from_str(&dest2));
+                    let dict = info.dictionary();
+                    dict.setObject_forKey(&*url, ProtocolObject::from_ref(&*NSPrintJobSavingURL));
+                    let op = webview.printOperationWithPrintInfo(&info);
+                    op.setShowsPrintPanel(false);
+                    op.setShowsProgressPanel(false);
+                    // WKWebView print operations need an explicit view frame,
+                    // otherwise the spooled PDF comes out blank.
+                    if let Some(view) = op.view() {
+                        view.setFrame(webview.frame());
+                    }
+                    if op.runOperation() {
+                        Ok(())
+                    } else {
+                        Err("print operation failed".into())
+                    }
+                })();
+
+                let _ = app.emit(
+                    "pdf-exported",
+                    PdfPayload {
+                        ok: result.is_ok(),
+                        path: dest2.clone(),
+                        error: result.err(),
+                    },
+                );
+            })
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (dest, window);
+        Err("PDF export not supported on this platform".into())
+    }
+}
+
 /// Modification time of `path` in epoch milliseconds. Used by the frontend's
 /// polling fallback for environments where the notify watcher delivers no
 /// events (network drives, some Windows setups).
@@ -185,7 +252,8 @@ pub fn run() {
             read_file,
             watch_file,
             unwatch_file,
-            file_mtime
+            file_mtime,
+            export_pdf
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
