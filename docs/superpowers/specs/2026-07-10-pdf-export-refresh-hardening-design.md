@@ -80,6 +80,24 @@ wry가 print-to-PDF를 노출하지 않으므로 `webview.with_webview()`로 네
 - Cmd+R 동작 확인.
 - Windows는 크로스빌드만 (실기 미검증 — 기존 한계 동일).
 
+## 구현 노트 (사후 기록)
+
+- **macOS printOperation 폐기**: `runOperation()`은 130MB 손상 PDF(xref 깨짐),
+  `runOperationModalForWindow`는 빈 1페이지 — WKWebView 인쇄 뷰가 페인트하지 않음.
+  최종 구현은 `WKWebView.createPDF`(전체 문서 단일 긴 벡터 페이지) + lopdf로
+  MediaBox 윈도잉하여 A4 비율 페이지 분할 (콘텐츠 스트림 공유, 벡터 보존).
+- **분할 한계**: 화면 렌더의 기하학적 슬라이스라 페이지 경계에서 텍스트 한 줄이
+  잘릴 수 있음 (내용 유실은 없음 — 다음 페이지 상단에 이어짐). Windows는
+  PrintToPdf가 네이티브 페이지네이션이라 해당 없음.
+- **createPDF는 화면 CSS 캡처**라 `@media print`가 안 먹음 → export 중
+  `body.pdf-exporting` 클래스로 앱 크롬 숨김 (print CSS는 Windows용으로 유지).
+- **MDVIEW_PDF_EXPORT_TEST=/path/out.pdf** env: 실행 5초 후 프론트 정식 플로우로
+  자동 export하는 스모크 훅 (macOS TCC가 스크립트 키 입력을 막아서 도입; CI 스모크
+  겸용).
+- **빌드 함정**: raw `cargo build --release`는 `custom-protocol` feature가 빠져
+  release 바이너리가 임베드 자산 대신 devUrl을 로드 → **빈 흰 창**. 반드시
+  `tauri build` CLI 경유 (또는 `--features tauri/custom-protocol`).
+
 ## 범위 외
 
 - idea.md의 "project 모드(파일 트리)" — 별도 작업.
