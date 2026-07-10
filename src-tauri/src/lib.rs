@@ -562,6 +562,18 @@ pub fn run() {
                     let _ = handle.emit("pdf-export-test", FilePayload { path: dest });
                 });
             }
+            // Headless project-mode smoke hook: MDVIEW_PROJECT_TEST=/path/to/dir
+            // asks the frontend to open the given folder as a project ~3s after
+            // launch, bypassing the folder picker dialog. Exists because macOS
+            // TCC blocks synthetic clicks in scripted verification; also usable
+            // as a CI smoke test.
+            if let Ok(dir) = std::env::var("MDVIEW_PROJECT_TEST") {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(3));
+                    let _ = handle.emit("project-open-test", FilePayload { path: dir });
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

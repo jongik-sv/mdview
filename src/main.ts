@@ -1253,6 +1253,10 @@ async function startTauri(): Promise<void> {
   await listen<{ path: string }>('pdf-export-test', (e) => {
     void exportPdf(e.payload.path);
   });
+  // Scripted smoke hook (MDVIEW_PROJECT_TEST) — open a folder as project, no dialog.
+  await listen<{ path: string }>('project-open-test', (e) => {
+    void openProject(e.payload.path);
+  });
   await listen('tree-changed', () => {
     void refreshTree();
   });
