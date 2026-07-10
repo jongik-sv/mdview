@@ -1275,7 +1275,13 @@ async function startTauri(): Promise<void> {
   getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === 'drop') {
       for (const p of event.payload.paths) {
-        void openTabFromPath(p);
+        if (/\.(md|markdown)$/i.test(p)) {
+          void openTabFromPath(p);
+        } else {
+          // md가 아니면 폴더로 시도 — scan_tree가 디렉토리 판별.
+          // 파일 등 실패 케이스는 조용히 무시(silent).
+          void openProject(p, true);
+        }
       }
     }
   });
@@ -1301,6 +1307,12 @@ async function startTauri(): Promise<void> {
   } else {
     await renderActive(); // show placeholder
   }
+
+  // 마지막 프로젝트 복원 (폴더가 사라졌으면 openProject가 조용히 기억을 지움)
+  const savedProject = localStorage.getItem(PROJECT_KEY);
+  if (savedProject) {
+    await openProject(savedProject, true);
+  }
 }
 
 if (isTauri) {
@@ -1308,6 +1320,7 @@ if (isTauri) {
 } else {
   // Chrome dev harness: hide + button, load fixture
   btnOpen.style.display = 'none';
+  btnOpenFolder.style.display = 'none';
   _addTab('sample.md', sample);
   void activate('sample.md');
 }
