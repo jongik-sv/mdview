@@ -573,6 +573,8 @@ mod tests {
     use super::*;
     use std::fs;
     use std::path::Path;
+    use std::thread;
+    use std::time::Duration;
 
     fn touch(p: &Path) {
         fs::write(p, "x").unwrap();
@@ -662,5 +664,24 @@ mod tests {
         assert!(res.tree.is_dir);
         assert!(res.tree.children.is_empty());
         assert!(!res.truncated);
+    }
+
+    #[test]
+    fn file_mtime_returns_millis_and_changes_on_write() {
+        let dir = std::env::temp_dir();
+        let p = dir.join("mdview-mtime-test.md");
+        std::fs::write(&p, "a").unwrap();
+        let t1 = file_mtime(p.to_string_lossy().into_owned()).unwrap();
+        assert!(t1 > 1_600_000_000_000); // 2020년 이후 epoch millis
+        thread::sleep(Duration::from_millis(1100));
+        std::fs::write(&p, "b").unwrap();
+        let t2 = file_mtime(p.to_string_lossy().into_owned()).unwrap();
+        assert!(t2 > t1);
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn file_mtime_errors_on_missing_file() {
+        assert!(file_mtime("/nonexistent/x.md".into()).is_err());
     }
 }
