@@ -1084,9 +1084,9 @@ interface ScanResult {
 
 const sidebar = document.querySelector<HTMLElement>('#sidebar')!;
 const sidebarTitle = document.querySelector<HTMLElement>('#sidebar-title')!;
-const sidebarClose = document.querySelector<HTMLButtonElement>('#sidebar-close')!;
 const treeEl = document.querySelector<HTMLElement>('#tree')!;
-const btnOpenFolder = document.querySelector<HTMLButtonElement>('#btn-open-folder')!;
+const btnTree = document.querySelector<HTMLButtonElement>('#btn-tree')!;
+const sidebarOpenFolder = document.querySelector<HTMLButtonElement>('#sidebar-open-folder')!;
 
 const PROJECT_KEY = 'mdview-project';
 const SIDEBAR_HIDDEN_KEY = 'mdview-sidebar-hidden';
@@ -1247,15 +1247,20 @@ function updateTreeHighlight(): void {
   }
 }
 
-sidebarClose.addEventListener('click', () => hideSidebar());
-
-btnOpenFolder.addEventListener('click', async () => {
-  // 숨겨진 트리는 다시 보여주고, 그 외에는 항상 폴더 선택(새 프로젝트로 교체).
-  // 숨기기는 사이드바의 × 버튼 전용.
-  if (projectRoot && sidebar.hidden) {
-    showSidebar();
+// ☰ 하나로 통합: 프로젝트 없으면 폴더 선택, 있으면 트리 토글.
+btnTree.addEventListener('click', async () => {
+  if (projectRoot) {
+    if (sidebar.hidden) showSidebar();
+    else hideSidebar();
     return;
   }
+  const sel = await open({ directory: true });
+  if (typeof sel === 'string') {
+    await openProject(sel);
+  }
+});
+
+sidebarOpenFolder.addEventListener('click', async () => {
   const sel = await open({ directory: true });
   if (typeof sel === 'string') {
     await openProject(sel);
@@ -1413,7 +1418,7 @@ if (isTauri) {
 } else {
   // Chrome dev harness: hide + button, load fixture
   btnOpen.style.display = 'none';
-  btnOpenFolder.style.display = 'none';
+  btnTree.style.display = 'none';
   _addTab('sample.md', sample);
   void activate('sample.md');
 }

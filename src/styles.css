@@ -48,6 +48,11 @@ html[data-mdview-theme='dark'] #toolbar {
   color: #e6edf3;
 }
 
+#btn-tree {
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
 /* Tab bar — thin visible horizontal scrollbar (draggable) shown only when the
    strip overflows; vertical wheel is also mapped to horizontal scroll in JS. */
 #tab-bar {

@@ -9,6 +9,14 @@
 
   <body>
     <div id="toolbar">
+      <button class="icon-btn" id="btn-tree" title="파일 트리 (프로젝트 없으면 폴더 열기)">
+        <!-- hamburger icon -->
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <line x1="3" y1="6" x2="21" y2="6"/>
+          <line x1="3" y1="12" x2="21" y2="12"/>
+          <line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
       <div id="tab-bar"></div>
       <div id="controls">
         <button class="icon-btn" id="btn-font-dec" title="글자 작게 (A−)">A−</button>
@@ -83,12 +91,6 @@
             <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
           </svg>
         </button>
-        <button class="icon-btn" id="btn-open-folder" title="폴더 열기">
-          <!-- folder icon -->
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-          </svg>
-        </button>
         <button class="icon-btn" id="btn-open" title="파일 열기 (+)">+</button>
       </div>
     </div>
@@ -96,10 +98,9 @@
     <aside id="sidebar" hidden>
       <div id="sidebar-header">
         <span id="sidebar-title"></span>
-        <button class="icon-btn" id="sidebar-close" title="사이드바 숨기기">
+        <button class="icon-btn" id="sidebar-open-folder" title="다른 폴더 열기">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
           </svg>
         </button>
       </div>
