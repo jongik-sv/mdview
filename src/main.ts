@@ -1089,9 +1089,24 @@ const treeEl = document.querySelector<HTMLElement>('#tree')!;
 const btnOpenFolder = document.querySelector<HTMLButtonElement>('#btn-open-folder')!;
 
 const PROJECT_KEY = 'mdview-project';
+const SIDEBAR_HIDDEN_KEY = 'mdview-sidebar-hidden';
 let projectRoot: string | null = null;
 let projectTree: TreeNode | null = null;
 const expandedPaths = new Set<string>();
+
+/// 사이드바만 숨긴다 — 프로젝트·watcher는 유지되어 트리는 계속 갱신된다.
+function hideSidebar(): void {
+  sidebar.hidden = true;
+  document.body.classList.remove('project-open');
+  localStorage.setItem(SIDEBAR_HIDDEN_KEY, '1');
+}
+
+function showSidebar(): void {
+  if (!projectRoot) return;
+  sidebar.hidden = false;
+  document.body.classList.add('project-open');
+  localStorage.removeItem(SIDEBAR_HIDDEN_KEY);
+}
 
 /// silent: 시작 시 복원/드롭 판별 경로 — 실패해도 toast 없이 조용히 넘어간다.
 async function openProject(root: string, silent = false): Promise<void> {
@@ -1118,8 +1133,7 @@ async function openProject(root: string, silent = false): Promise<void> {
   if (res.truncated) toast('항목이 많아 트리를 일부만 표시합니다');
   sidebarTitle.textContent = res.tree.name;
   sidebarTitle.title = root;
-  sidebar.hidden = false;
-  document.body.classList.add('project-open');
+  showSidebar();
   renderTree();
   localStorage.setItem(PROJECT_KEY, root);
   try {
@@ -1138,6 +1152,7 @@ function closeProject(): void {
   sidebar.hidden = true;
   document.body.classList.remove('project-open');
   localStorage.removeItem(PROJECT_KEY);
+  localStorage.removeItem(SIDEBAR_HIDDEN_KEY);
 }
 
 /// tree-changed 수신 시 재스캔. 펼침 상태(expandedPaths)는 그대로 유지.
@@ -1231,9 +1246,15 @@ function updateTreeHighlight(): void {
   }
 }
 
-sidebarClose.addEventListener('click', () => closeProject());
+sidebarClose.addEventListener('click', () => hideSidebar());
 
 btnOpenFolder.addEventListener('click', async () => {
+  if (projectRoot) {
+    // 프로젝트가 이미 있으면 버튼은 보이기/숨기기 토글로 동작한다.
+    if (sidebar.hidden) showSidebar();
+    else hideSidebar();
+    return;
+  }
   const sel = await open({ directory: true });
   if (typeof sel === 'string') {
     await openProject(sel);
@@ -1334,6 +1355,7 @@ async function startTauri(): Promise<void> {
   const savedProject = localStorage.getItem(PROJECT_KEY);
   if (savedProject) {
     await openProject(savedProject, true);
+    if (localStorage.getItem(SIDEBAR_HIDDEN_KEY) === '1') hideSidebar();
   }
 }
 
