@@ -923,6 +923,7 @@ function renderTabBar(): void {
   // Keep the active tab visible when the strip overflows (open/switch scrolls to it).
   activeEl?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   updateCopyPathBtn();
+  updateTreeHighlight();
 }
 
 async function renderActive(): Promise<void> {
@@ -1062,6 +1063,165 @@ async function openTabFromPath(path: string): Promise<void> {
   await activate(path);
 }
 
+// ── Project mode (md-only file tree sidebar) ─────────────────────────────────
+interface TreeNode {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  children: TreeNode[];
+}
+interface ScanResult {
+  tree: TreeNode;
+  truncated: boolean;
+}
+
+const sidebar = document.querySelector<HTMLElement>('#sidebar')!;
+const sidebarTitle = document.querySelector<HTMLElement>('#sidebar-title')!;
+const sidebarClose = document.querySelector<HTMLButtonElement>('#sidebar-close')!;
+const treeEl = document.querySelector<HTMLElement>('#tree')!;
+const btnOpenFolder = document.querySelector<HTMLButtonElement>('#btn-open-folder')!;
+
+const PROJECT_KEY = 'mdview-project';
+let projectRoot: string | null = null;
+let projectTree: TreeNode | null = null;
+const expandedPaths = new Set<string>();
+
+/// silent: 시작 시 복원/드롭 판별 경로 — 실패해도 toast 없이 조용히 넘어간다.
+async function openProject(root: string, silent = false): Promise<void> {
+  let res: ScanResult;
+  try {
+    res = await invoke<ScanResult>('scan_tree', { root });
+  } catch (e) {
+    if (silent) {
+      // 복원 대상 폴더가 사라진 경우: 기억을 지운다.
+      if (localStorage.getItem(PROJECT_KEY) === root) {
+        localStorage.removeItem(PROJECT_KEY);
+      }
+    } else {
+      toast(`폴더 열기 실패: ${String(e)}`);
+    }
+    return;
+  }
+  if (projectRoot !== root) {
+    // 새 프로젝트: 펼침 상태 초기화, 루트 직속만 펼침(자식 dir는 접힘).
+    expandedPaths.clear();
+  }
+  projectRoot = root;
+  projectTree = res.tree;
+  if (res.truncated) toast('항목이 많아 트리를 일부만 표시합니다');
+  sidebarTitle.textContent = res.tree.name;
+  sidebarTitle.title = root;
+  sidebar.hidden = false;
+  document.body.classList.add('project-open');
+  renderTree();
+  localStorage.setItem(PROJECT_KEY, root);
+  await invoke('watch_dir', { root });
+}
+
+function closeProject(): void {
+  if (projectRoot) void invoke('unwatch_dir', { root: projectRoot });
+  projectRoot = null;
+  projectTree = null;
+  expandedPaths.clear();
+  treeEl.textContent = '';
+  sidebar.hidden = true;
+  document.body.classList.remove('project-open');
+  localStorage.removeItem(PROJECT_KEY);
+}
+
+/// tree-changed 수신 시 재스캔. 펼침 상태(expandedPaths)는 그대로 유지.
+async function refreshTree(): Promise<void> {
+  if (!projectRoot) return;
+  try {
+    const res = await invoke<ScanResult>('scan_tree', { root: projectRoot });
+    projectTree = res.tree;
+    renderTree();
+  } catch {
+    // 프로젝트 폴더 자체가 사라짐
+    closeProject();
+  }
+}
+
+function renderTree(): void {
+  treeEl.textContent = '';
+  if (!projectTree) return;
+  if (projectTree.children.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'tree-empty';
+    empty.textContent = 'md 파일 없음';
+    treeEl.appendChild(empty);
+    return;
+  }
+  treeEl.appendChild(buildTreeChildren(projectTree.children));
+  updateTreeHighlight();
+}
+
+function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
+  const wrap = document.createElement('div');
+  wrap.className = 'tree-children';
+  for (const n of nodes) {
+    const row = document.createElement('div');
+    row.className = 'tree-row ' + (n.is_dir ? 'tree-dir' : 'tree-file');
+    row.dataset.path = n.path;
+    row.title = n.path;
+
+    const icon = document.createElement('span');
+    icon.className = 'tree-icon';
+    const label = document.createElement('span');
+    label.className = 'tree-label';
+    label.textContent = n.name;
+    row.appendChild(icon);
+    row.appendChild(label);
+    wrap.appendChild(row);
+
+    if (n.is_dir) {
+      const expanded = expandedPaths.has(n.path);
+      icon.textContent = expanded ? '▾' : '▸';
+      row.addEventListener('click', () => {
+        if (expandedPaths.has(n.path)) {
+          expandedPaths.delete(n.path);
+        } else {
+          expandedPaths.add(n.path);
+        }
+        renderTree();
+      });
+      if (expanded) {
+        wrap.appendChild(buildTreeChildren(n.children));
+      }
+    } else {
+      row.addEventListener('click', () => {
+        void openTabFromPath(n.path);
+      });
+    }
+  }
+  return wrap;
+}
+
+/// 활성 탭 파일을 트리에서 하이라이트. renderTabBar()가 탭 변화마다 호출.
+function updateTreeHighlight(): void {
+  if (sidebar.hidden) return;
+  for (const el of treeEl.querySelectorAll<HTMLElement>('.tree-row.active')) {
+    el.classList.remove('active');
+  }
+  if (!activePath) return;
+  const row = treeEl.querySelector<HTMLElement>(
+    `.tree-file[data-path="${CSS.escape(activePath)}"]`,
+  );
+  if (row) {
+    row.classList.add('active');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+}
+
+sidebarClose.addEventListener('click', () => closeProject());
+
+btnOpenFolder.addEventListener('click', async () => {
+  const sel = await open({ directory: true });
+  if (typeof sel === 'string') {
+    await openProject(sel);
+  }
+});
+
 // ── Theme init (before first render) ─────────────────────────────────────────
 function onThemeChange(effective: EffectiveTheme): void {
   effectiveTheme = effective;
@@ -1092,6 +1252,9 @@ async function startTauri(): Promise<void> {
   // Scripted smoke hook (MDVIEW_PDF_EXPORT_TEST) — full export flow, no dialog.
   await listen<{ path: string }>('pdf-export-test', (e) => {
     void exportPdf(e.payload.path);
+  });
+  await listen('tree-changed', () => {
+    void refreshTree();
   });
 
   // Polling fallback: environments where the notify watcher delivers no
