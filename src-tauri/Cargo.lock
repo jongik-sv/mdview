@@ -2344,6 +2344,8 @@ dependencies = [
  "tauri-plugin-opener",
  "tauri-plugin-single-instance",
  "url",
+ "webview2-com",
+ "windows",
 ]
 
 [[package]]

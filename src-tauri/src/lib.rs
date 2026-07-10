@@ -174,12 +174,73 @@ fn export_pdf(dest: String, window: tauri::WebviewWindow) -> Result<(), String> 
         return Ok(());
     }
 
-    #[cfg(not(target_os = "macos"))]
+    // Windows: WebView2's PrintToPdf runs a real print pipeline (applies
+    // @media print CSS and paginates natively) — no post-processing needed.
+    #[cfg(target_os = "windows")]
+    {
+        let app = window.app_handle().clone();
+        let dest2 = dest.clone();
+        window
+            .with_webview(move |wv| {
+                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_7;
+                use webview2_com::PrintToPdfCompletedHandler;
+                use windows::core::{Interface, HSTRING};
+
+                let emit = |app: &tauri::AppHandle, ok: bool, path: String, err: Option<String>| {
+                    let _ = app.emit(
+                        "pdf-exported",
+                        PdfPayload {
+                            ok,
+                            path,
+                            error: err,
+                        },
+                    );
+                };
+
+                unsafe {
+                    let controller = wv.controller();
+                    let core = match controller.CoreWebView2() {
+                        Ok(c) => c,
+                        Err(e) => return emit(&app, false, dest2.clone(), Some(e.to_string())),
+                    };
+                    let core7: ICoreWebView2_7 = match core.cast() {
+                        Ok(c) => c,
+                        Err(e) => return emit(&app, false, dest2.clone(), Some(e.to_string())),
+                    };
+                    let app2 = app.clone();
+                    let dest3 = dest2.clone();
+                    let handler = PrintToPdfCompletedHandler::create(Box::new(
+                        move |result: windows::core::Result<()>, is_successful| {
+                            let ok = result.is_ok() && is_successful;
+                            let err = if ok { None } else { Some(format!("{result:?}")) };
+                            let _ = app2.emit(
+                                "pdf-exported",
+                                PdfPayload {
+                                    ok,
+                                    path: dest3.clone(),
+                                    error: err,
+                                },
+                            );
+                            Ok(())
+                        },
+                    ));
+                    if let Err(e) = core7.PrintToPdf(&HSTRING::from(dest2.as_str()), None, &handler)
+                    {
+                        emit(&app, false, dest2.clone(), Some(e.to_string()));
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
         let _ = (dest, window);
         Err("PDF export not supported on this platform".into())
     }
 }
+
 
 /// Slice a single-long-page PDF (WKWebView `createPDF` output) into A4-ratio
 /// pages. Every output page references the SAME content stream and differs
