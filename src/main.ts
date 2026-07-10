@@ -1250,10 +1250,10 @@ function updateTreeHighlight(): void {
 sidebarClose.addEventListener('click', () => hideSidebar());
 
 btnOpenFolder.addEventListener('click', async () => {
-  if (projectRoot) {
-    // 프로젝트가 이미 있으면 버튼은 보이기/숨기기 토글로 동작한다.
-    if (sidebar.hidden) showSidebar();
-    else hideSidebar();
+  // 숨겨진 트리는 다시 보여주고, 그 외에는 항상 폴더 선택(새 프로젝트로 교체).
+  // 숨기기는 사이드바의 × 버튼 전용.
+  if (projectRoot && sidebar.hidden) {
+    showSidebar();
     return;
   }
   const sel = await open({ directory: true });
