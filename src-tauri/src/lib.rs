@@ -124,7 +124,15 @@ struct PdfPayload {
 /// print dialog. Completion is reported via the `pdf-exported` event because
 /// the Windows implementation is asynchronous; macOS emits it synchronously.
 #[tauri::command]
-fn export_pdf(dest: String, window: tauri::WebviewWindow) -> Result<(), String> {
+fn export_pdf(
+    dest: String,
+    title: Option<String>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    // macOS draws the header/footer in the DOM before capture; only the
+    // Windows print pipeline consumes `title` natively.
+    #[cfg(target_os = "macos")]
+    let _ = &title;
     // macOS: WKWebView's print operation (both run variants) yields blank or
     // corrupt PDFs, so use `createPDF` — it reliably captures the full
     // document as ONE long vector page — then slice that page into A4-ratio
@@ -182,7 +190,9 @@ fn export_pdf(dest: String, window: tauri::WebviewWindow) -> Result<(), String> 
         let dest2 = dest.clone();
         window
             .with_webview(move |wv| {
-                use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_7;
+                use webview2_com::Microsoft::Web::WebView2::Win32::{
+                    ICoreWebView2Environment6, ICoreWebView2_2, ICoreWebView2_7,
+                };
                 use webview2_com::PrintToPdfCompletedHandler;
                 use windows::core::{Interface, HSTRING};
 
@@ -207,6 +217,24 @@ fn export_pdf(dest: String, window: tauri::WebviewWindow) -> Result<(), String> 
                         Ok(c) => c,
                         Err(e) => return emit(&app, false, dest2.clone(), Some(e.to_string())),
                     };
+                    // Print settings: native header (document title) + footer
+                    // (page numbers); blank out the footer URI (tauri://…).
+                    let settings = core
+                        .cast::<ICoreWebView2_2>()
+                        .and_then(|c2| c2.Environment())
+                        .and_then(|env| env.cast::<ICoreWebView2Environment6>())
+                        .and_then(|env6| env6.CreatePrintSettings());
+                    let settings = match settings {
+                        Ok(s) => {
+                            let _ = s.SetShouldPrintHeaderAndFooter(true);
+                            let _ = s.SetHeaderTitle(&HSTRING::from(
+                                title.clone().unwrap_or_default(),
+                            ));
+                            let _ = s.SetFooterUri(&HSTRING::from(""));
+                            Some(s)
+                        }
+                        Err(_) => None, // settings are best-effort; export anyway
+                    };
                     let app2 = app.clone();
                     let dest3 = dest2.clone();
                     let handler = PrintToPdfCompletedHandler::create(Box::new(
@@ -224,7 +252,8 @@ fn export_pdf(dest: String, window: tauri::WebviewWindow) -> Result<(), String> 
                             Ok(())
                         },
                     ));
-                    if let Err(e) = core7.PrintToPdf(&HSTRING::from(dest2.as_str()), None, &handler)
+                    if let Err(e) =
+                        core7.PrintToPdf(&HSTRING::from(dest2.as_str()), settings.as_ref(), &handler)
                     {
                         emit(&app, false, dest2.clone(), Some(e.to_string()));
                     }

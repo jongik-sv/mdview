@@ -452,6 +452,80 @@ async function renderAllMermaid(blocks: string[], theme: 'default' | 'dark'): Pr
 // ── PDF export ────────────────────────────────────────────────────────────────
 let pdfExporting = false;
 
+// macOS export path: the PDF is a geometric slice of the SCREEN layout, so
+// page composition must be prepared in the DOM. Windows (PrintToPdf) runs a
+// real print pipeline and gets native pagination + header/footer instead.
+const isMacLayout = navigator.userAgent.includes('Mac');
+
+/**
+ * Prepare the DOM for A4 slicing (macOS only):
+ * - reserve a header/footer band on every page and absolutely position the
+ *   document title (header) and "n / N" (footer) into those bands
+ * - insert spacers before blocks that would straddle a page's usable area,
+ *   pushing them to the next page — no more mid-line cuts
+ * Every added node carries .pdf-decoration; finishPdfExport removes them.
+ * Page height mirrors the Rust slicer: width × 842/595 (A4 ratio) — uniform
+ * scale keeps both boundary grids identical.
+ */
+function decorateForPdf(title: string): void {
+  const docW = document.documentElement.scrollWidth;
+  const pageH = docW * (842 / 595);
+  const band = Math.round(pageH * 0.045);
+
+  // Page 1's content must start below its header band.
+  content.style.paddingTop = `${band}px`;
+
+  // Push blocks out of footer/header bands (recurse into too-tall blocks).
+  const usableH = pageH - band * 2;
+  const pushBlocks = (parent: HTMLElement): void => {
+    for (
+      let el = parent.firstElementChild as HTMLElement | null;
+      el;
+      el = el.nextElementSibling as HTMLElement | null
+    ) {
+      if (el.classList.contains('pdf-decoration')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.height === 0) continue;
+      const top = r.top + window.scrollY;
+      const bottom = r.bottom + window.scrollY;
+      const page = Math.floor(top / pageH);
+      if (bottom <= (page + 1) * pageH - band) continue; // fits in usable area
+      if (r.height <= usableH) {
+        const sp = document.createElement('div');
+        sp.className = 'pdf-decoration';
+        sp.style.height = `${(page + 1) * pageH + band - top}px`;
+        el.parentElement!.insertBefore(sp, el);
+      } else {
+        pushBlocks(el); // taller than a page: try its children
+      }
+    }
+  };
+  pushBlocks(content);
+
+  // Header (title) + footer (page number) bands, absolutely positioned in
+  // document coordinates — they land exactly inside each sliced page.
+  const docH = document.documentElement.scrollHeight;
+  const pages = Math.max(1, Math.ceil(docH / pageH));
+  for (let k = 0; k < pages; k++) {
+    const header = document.createElement('div');
+    header.className = 'pdf-decoration pdf-page-band';
+    header.style.top = `${k * pageH}px`;
+    header.style.height = `${band}px`;
+    header.textContent = title;
+    const footer = document.createElement('div');
+    footer.className = 'pdf-decoration pdf-page-band';
+    footer.style.top = `${(k + 1) * pageH - band}px`;
+    footer.style.height = `${band}px`;
+    footer.textContent = `${k + 1} / ${pages}`;
+    document.body.append(header, footer);
+  }
+}
+
+function removePdfDecorations(): void {
+  document.querySelectorAll('.pdf-decoration').forEach((el) => el.remove());
+  content.style.paddingTop = '';
+}
+
 /**
  * Save the active document as PDF: pick destination, force light theme
  * (mermaid re-rendered light), let Rust drive the native print-to-PDF, then
@@ -480,17 +554,22 @@ async function exportPdf(destOverride?: string): Promise<void> {
   try {
     // macOS captures screen CSS (not print media): hide app chrome via class,
     // force light. setExportOverride triggers the theme onChange, but that
-    // mermaid re-render is fire-and-forget — await one explicitly.
+    // mermaid re-render is fire-and-forget — await one explicitly. Decoration
+    // (page bands + spacers) must run AFTER mermaid settles the layout.
     document.body.classList.add('pdf-exporting');
     setExportOverride(true);
     await renderAllMermaid(tab.blocks, 'default');
-    await invoke('export_pdf', { dest });
+    if (isMacLayout) {
+      decorateForPdf(tab.title);
+    }
+    await invoke('export_pdf', { dest, title: tab.title });
   } catch (err) {
     finishPdfExport(false, dest, String(err));
   }
 }
 
 function finishPdfExport(ok: boolean, path: string, error: string | null): void {
+  removePdfDecorations();
   document.body.classList.remove('pdf-exporting');
   setExportOverride(false);
   pdfExporting = false;

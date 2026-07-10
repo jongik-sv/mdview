@@ -589,6 +589,19 @@ body.pdf-exporting #recent-menu,
 body.pdf-exporting #editor {
   display: none !important;
 }
+/* Per-page header/footer bands, absolutely positioned in document coords by
+   decorateForPdf() so they land inside each sliced A4 page (macOS export). */
+.pdf-page-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888888;
+  font-size: 12px;
+  overflow: hidden;
+}
 @media print {
   #toolbar,
   #search-bar,
