@@ -579,7 +579,16 @@ html[data-mdview-theme='dark'] .search-btn:hover {
 }
 
 /* ── PDF export / print ─────────────────────────────────────────────────────
-   Hide app chrome; print only the rendered document, always on white. */
+   Hide app chrome; print only the rendered document, always on white.
+   Two triggers: @media print (Windows PrintToPdf runs a real print pipeline)
+   and body.pdf-exporting (macOS createPDF snapshots SCREEN css, so the
+   frontend toggles this class around the export). */
+body.pdf-exporting #toolbar,
+body.pdf-exporting #search-bar,
+body.pdf-exporting #recent-menu,
+body.pdf-exporting #editor {
+  display: none !important;
+}
 @media print {
   #toolbar,
   #search-bar,

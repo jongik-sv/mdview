@@ -1,13 +1,20 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { open } from '@tauri-apps/plugin-dialog';
+import { open, save } from '@tauri-apps/plugin-dialog';
 import { openUrl, openPath } from '@tauri-apps/plugin-opener';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import mermaid from 'mermaid';
 import sample from './fixtures/sample.md?raw';
 import { renderMarkdown } from './render';
-import { initTheme, setMode, getMode, type EffectiveTheme, type ThemeMode } from './theme';
+import {
+  initTheme,
+  setMode,
+  getMode,
+  setExportOverride,
+  type EffectiveTheme,
+  type ThemeMode,
+} from './theme';
 import { renderSource, setSourceTheme, setSourceFontSize } from './editor';
 
 const isTauri = '__TAURI_INTERNALS__' in window;
@@ -26,6 +33,7 @@ const btnFontInc = document.querySelector<HTMLButtonElement>('#btn-font-inc')!;
 const fontReadout = document.querySelector<HTMLButtonElement>('#font-readout')!;
 const btnOpen = document.querySelector<HTMLButtonElement>('#btn-open')!;
 const btnCopyPath = document.querySelector<HTMLButtonElement>('#btn-copy-path')!;
+const btnPdf = document.querySelector<HTMLButtonElement>('#btn-pdf')!;
 const btnRecent = document.querySelector<HTMLButtonElement>('#btn-recent')!;
 const recentMenu = document.querySelector<HTMLElement>('#recent-menu')!;
 const searchToggle = document.querySelector<HTMLButtonElement>('#search-toggle')!;
@@ -399,6 +407,9 @@ window.addEventListener('keydown', (e) => {
     // Manual reload of the active tab — NOT a webview page reload.
     e.preventDefault();
     if (activePath) void reloadTab(activePath);
+  } else if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
+    e.preventDefault();
+    void exportPdf();
   } else if (e.key === 'Escape' && searchOpen) {
     e.preventDefault();
     closeSearchBar();
@@ -437,6 +448,60 @@ async function renderAllMermaid(blocks: string[], theme: 'default' | 'dark'): Pr
     }
   }
 }
+
+// ── PDF export ────────────────────────────────────────────────────────────────
+let pdfExporting = false;
+
+/**
+ * Save the active document as PDF: pick destination, force light theme
+ * (mermaid re-rendered light), let Rust drive the native print-to-PDF, then
+ * restore the current theme. Completion arrives via the `pdf-exported` event.
+ */
+/**
+ * `destOverride` skips the save dialog (used by the MDVIEW_PDF_EXPORT_TEST
+ * smoke hook); normal UI flows leave it undefined.
+ */
+async function exportPdf(destOverride?: string): Promise<void> {
+  if (!isTauri || pdfExporting || activePath === null) return;
+  const tab = findTab(activePath);
+  if (!tab) return;
+  let dest = destOverride ?? null;
+  if (dest === null) {
+    const defaultName = tab.title.replace(/\.(md|markdown)$/i, '') + '.pdf';
+    const sep = activePath.includes('\\') ? '\\' : '/';
+    const dir = activePath.slice(0, activePath.lastIndexOf(sep));
+    dest = await save({
+      defaultPath: dir + sep + defaultName,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+  }
+  if (dest === null) return; // user cancelled
+  pdfExporting = true;
+  try {
+    // macOS captures screen CSS (not print media): hide app chrome via class,
+    // force light. setExportOverride triggers the theme onChange, but that
+    // mermaid re-render is fire-and-forget — await one explicitly.
+    document.body.classList.add('pdf-exporting');
+    setExportOverride(true);
+    await renderAllMermaid(tab.blocks, 'default');
+    await invoke('export_pdf', { dest });
+  } catch (err) {
+    finishPdfExport(false, dest, String(err));
+  }
+}
+
+function finishPdfExport(ok: boolean, path: string, error: string | null): void {
+  document.body.classList.remove('pdf-exporting');
+  setExportOverride(false);
+  pdfExporting = false;
+  if (ok) {
+    toast(`PDF 저장됨: ${path}`);
+  } else {
+    toast(`PDF 저장 실패: ${error ?? '알 수 없는 오류'}`);
+  }
+}
+
+btnPdf.addEventListener('click', () => void exportPdf());
 
 // ── Font size ─────────────────────────────────────────────────────────────────
 const FONT_KEY = 'mdview-fontsize';
@@ -941,6 +1006,13 @@ async function startTauri(): Promise<void> {
   });
   await listen<{ path: string }>('file-changed', (e) => {
     void reloadTab(e.payload.path);
+  });
+  await listen<{ ok: boolean; path: string; error: string | null }>('pdf-exported', (e) => {
+    finishPdfExport(e.payload.ok, e.payload.path, e.payload.error);
+  });
+  // Scripted smoke hook (MDVIEW_PDF_EXPORT_TEST) — full export flow, no dialog.
+  await listen<{ path: string }>('pdf-export-test', (e) => {
+    void exportPdf(e.payload.path);
   });
 
   // Polling fallback: environments where the notify watcher delivers no

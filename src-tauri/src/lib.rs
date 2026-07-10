@@ -125,48 +125,50 @@ struct PdfPayload {
 /// the Windows implementation is asynchronous; macOS emits it synchronously.
 #[tauri::command]
 fn export_pdf(dest: String, window: tauri::WebviewWindow) -> Result<(), String> {
+    // macOS: WKWebView's print operation (both run variants) yields blank or
+    // corrupt PDFs, so use `createPDF` — it reliably captures the full
+    // document as ONE long vector page — then slice that page into A4-ratio
+    // pages by MediaBox windowing (content stream shared, vectors preserved).
     #[cfg(target_os = "macos")]
     {
         let app = window.app_handle().clone();
         let dest2 = dest.clone();
         window
             .with_webview(move |wv| {
-                use objc2::rc::Retained;
-                use objc2::runtime::ProtocolObject;
-                use objc2_app_kit::{NSPrintInfo, NSPrintJobSavingURL, NSPrintSaveJob};
-                use objc2_foundation::{NSCopying, NSString, NSURL};
-                use objc2_web_kit::WKWebView;
+                use block2::RcBlock;
+                use objc2::MainThreadMarker;
+                use objc2_foundation::{NSData, NSError};
+                use objc2_web_kit::{WKPDFConfiguration, WKWebView};
 
-                let result: Result<(), String> = (|| unsafe {
+                unsafe {
                     let webview: &WKWebView = &*(wv.inner() as *const WKWebView);
-                    let info: Retained<NSPrintInfo> = NSPrintInfo::sharedPrintInfo().copy();
-                    info.setJobDisposition(NSPrintSaveJob);
-                    let url = NSURL::fileURLWithPath(&NSString::from_str(&dest2));
-                    let dict = info.dictionary();
-                    dict.setObject_forKey(&*url, ProtocolObject::from_ref(&*NSPrintJobSavingURL));
-                    let op = webview.printOperationWithPrintInfo(&info);
-                    op.setShowsPrintPanel(false);
-                    op.setShowsProgressPanel(false);
-                    // WKWebView print operations need an explicit view frame,
-                    // otherwise the spooled PDF comes out blank.
-                    if let Some(view) = op.view() {
-                        view.setFrame(webview.frame());
-                    }
-                    if op.runOperation() {
-                        Ok(())
-                    } else {
-                        Err("print operation failed".into())
-                    }
-                })();
-
-                let _ = app.emit(
-                    "pdf-exported",
-                    PdfPayload {
-                        ok: result.is_ok(),
-                        path: dest2.clone(),
-                        error: result.err(),
-                    },
-                );
+                    let app2 = app.clone();
+                    let dest3 = dest2.clone();
+                    let block = RcBlock::new(move |data: *mut NSData, error: *mut NSError| {
+                        let result: Result<(), String> = (|| {
+                            if data.is_null() {
+                                return Err(if error.is_null() {
+                                    "PDF 데이터 없음".to_string()
+                                } else {
+                                    (*error).localizedDescription().to_string()
+                                });
+                            }
+                            paginate_pdf(&(*data).to_vec(), &dest3)
+                        })();
+                        let _ = app2.emit(
+                            "pdf-exported",
+                            PdfPayload {
+                                ok: result.is_ok(),
+                                path: dest3.clone(),
+                                error: result.err(),
+                            },
+                        );
+                    });
+                    let mtm = MainThreadMarker::new()
+                        .expect("with_webview closure must run on the main thread");
+                    let config = WKPDFConfiguration::new(mtm);
+                    webview.createPDFWithConfiguration_completionHandler(Some(&config), &block);
+                }
             })
             .map_err(|e| e.to_string())?;
         return Ok(());
@@ -177,6 +179,65 @@ fn export_pdf(dest: String, window: tauri::WebviewWindow) -> Result<(), String> 
         let _ = (dest, window);
         Err("PDF export not supported on this platform".into())
     }
+}
+
+/// Slice a single-long-page PDF (WKWebView `createPDF` output) into A4-ratio
+/// pages. Every output page references the SAME content stream and differs
+/// only in its MediaBox window, so vectors/text stay intact. A page boundary
+/// can land mid-line — inherent to geometric slicing of a screen render.
+#[cfg(target_os = "macos")]
+fn paginate_pdf(input: &[u8], dest: &str) -> Result<(), String> {
+    use lopdf::{Document, Object};
+
+    let mut doc = Document::load_mem(input).map_err(|e| e.to_string())?;
+    let pages = doc.get_pages();
+    let (_, &page_id) = pages.iter().next().ok_or("empty pdf")?;
+    let page_dict = doc
+        .get_object(page_id)
+        .and_then(|o| o.as_dict())
+        .map_err(|e| e.to_string())?
+        .clone();
+
+    let media: Vec<f64> = page_dict
+        .get(b"MediaBox")
+        .and_then(|o| o.as_array())
+        .map_err(|e| e.to_string())?
+        .iter()
+        .map(|o| o.as_float().unwrap_or(0.0) as f64)
+        .collect();
+    let [x0, y0, x1, y1] = media[..] else {
+        return Err("bad MediaBox".into());
+    };
+    let (w, h) = (x1 - x0, y1 - y0);
+    let page_h = w * 842.0 / 595.0; // A4 aspect at the captured width
+    let n = (h / page_h).ceil().max(1.0) as usize;
+
+    if n > 1 {
+        let parent = page_dict
+            .get(b"Parent")
+            .and_then(|o| o.as_reference())
+            .map_err(|e| e.to_string())?;
+        let mut kids: Vec<Object> = Vec::with_capacity(n);
+        for i in 0..n {
+            let top = y1 - page_h * i as f64;
+            let bottom = (top - page_h).max(y0);
+            let mut d = page_dict.clone();
+            d.set(
+                "MediaBox",
+                vec![x0.into(), bottom.into(), x1.into(), top.into()],
+            );
+            kids.push(Object::Reference(doc.add_object(Object::Dictionary(d))));
+        }
+        let pages_node = doc
+            .get_object_mut(parent)
+            .and_then(|o| o.as_dict_mut())
+            .map_err(|e| e.to_string())?;
+        pages_node.set("Kids", kids);
+        pages_node.set("Count", n as i64);
+    }
+
+    doc.save(dest).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Modification time of `path` in epoch milliseconds. Used by the frontend's
@@ -245,6 +306,18 @@ pub fn run() {
             app.manage(AppState {
                 watchers: Mutex::new(HashMap::new()),
             });
+            // Headless PDF smoke hook: MDVIEW_PDF_EXPORT_TEST=/path/out.pdf
+            // asks the frontend to run its full export flow (theme override,
+            // chrome hiding, invoke) ~5s after launch. Exists because macOS
+            // TCC blocks synthetic keystrokes in scripted verification; also
+            // usable as a CI smoke test.
+            if let Ok(dest) = std::env::var("MDVIEW_PDF_EXPORT_TEST") {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(Duration::from_secs(5));
+                    let _ = handle.emit("pdf-export-test", FilePayload { path: dest });
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
