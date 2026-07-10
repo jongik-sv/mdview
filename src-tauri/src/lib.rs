@@ -112,6 +112,19 @@ fn unwatch_file(path: String, state: tauri::State<AppState>) {
     state.watchers.lock().unwrap().remove(&path);
 }
 
+/// Modification time of `path` in epoch milliseconds. Used by the frontend's
+/// polling fallback for environments where the notify watcher delivers no
+/// events (network drives, some Windows setups).
+#[tauri::command]
+fn file_mtime(path: String) -> Result<u64, String> {
+    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+    let mtime = meta.modified().map_err(|e| e.to_string())?;
+    mtime
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Win/Linux: the file path arrives as argv[1]. On macOS this is empty for
@@ -171,7 +184,8 @@ pub fn run() {
             get_initial_file,
             read_file,
             watch_file,
-            unwatch_file
+            unwatch_file,
+            file_mtime
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -205,4 +219,28 @@ pub fn run() {
         }
         let _ = (handle, event);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_mtime_returns_millis_and_changes_on_write() {
+        let dir = std::env::temp_dir();
+        let p = dir.join("mdview-mtime-test.md");
+        std::fs::write(&p, "a").unwrap();
+        let t1 = file_mtime(p.to_string_lossy().into_owned()).unwrap();
+        assert!(t1 > 1_600_000_000_000); // 2020년 이후 epoch millis
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        std::fs::write(&p, "b").unwrap();
+        let t2 = file_mtime(p.to_string_lossy().into_owned()).unwrap();
+        assert!(t2 > t1);
+        std::fs::remove_file(&p).ok();
+    }
+
+    #[test]
+    fn file_mtime_errors_on_missing_file() {
+        assert!(file_mtime("/nonexistent/x.md".into()).is_err());
+    }
 }
