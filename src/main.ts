@@ -1106,6 +1106,7 @@ function showSidebar(): void {
   sidebar.hidden = false;
   document.body.classList.add('project-open');
   localStorage.removeItem(SIDEBAR_HIDDEN_KEY);
+  updateTreeHighlight();
 }
 
 /// silent: 시작 시 복원/드롭 판별 경로 — 실패해도 toast 없이 조용히 넘어간다.
@@ -1282,16 +1283,29 @@ sidebarResize.addEventListener('pointerdown', (e) => {
   sidebarResize.setPointerCapture(e.pointerId);
   document.body.classList.add('sidebar-resizing');
   const onMove = (ev: PointerEvent) => applySidebarWidth(ev.clientX);
-  const onUp = (ev: PointerEvent) => {
+  const cleanup = () => {
     sidebarResize.removeEventListener('pointermove', onMove);
     sidebarResize.removeEventListener('pointerup', onUp);
+    sidebarResize.removeEventListener('pointercancel', onCancel);
     document.body.classList.remove('sidebar-resizing');
-    applySidebarWidth(ev.clientX);
+  };
+  const persistWidth = () => {
     const cur = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w');
     localStorage.setItem(SIDEBAR_W_KEY, String(parseInt(cur, 10) || 240));
   };
+  const onUp = (ev: PointerEvent) => {
+    cleanup();
+    applySidebarWidth(ev.clientX);
+    persistWidth();
+  };
+  // 드래그 중 취소(제스처 인터럽트 등) 시에도 리스너·클래스가 남지 않도록 정리한다.
+  const onCancel = () => {
+    cleanup();
+    persistWidth();
+  };
   sidebarResize.addEventListener('pointermove', onMove);
   sidebarResize.addEventListener('pointerup', onUp);
+  sidebarResize.addEventListener('pointercancel', onCancel);
 });
 
 // ── Theme init (before first render) ─────────────────────────────────────────
@@ -1387,8 +1401,10 @@ async function startTauri(): Promise<void> {
   // 마지막 프로젝트 복원 (폴더가 사라졌으면 openProject가 조용히 기억을 지움)
   const savedProject = localStorage.getItem(PROJECT_KEY);
   if (savedProject) {
+    // openProject의 showSidebar()가 플래그를 지우므로 호출 전에 스냅샷
+    const wasHidden = localStorage.getItem(SIDEBAR_HIDDEN_KEY) === '1';
     await openProject(savedProject, true);
-    if (localStorage.getItem(SIDEBAR_HIDDEN_KEY) === '1') hideSidebar();
+    if (wasHidden) hideSidebar();
   }
 }
 

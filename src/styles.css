@@ -590,8 +590,9 @@ html[data-mdview-theme='dark'] .search-btn:hover {
   left: 0;
   bottom: 0;
   width: var(--sidebar-w);
-  overflow-y: auto;
-  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid;
   font-size: 13px;
   z-index: 50;
@@ -637,14 +638,18 @@ html[data-mdview-theme='dark'] #sidebar {
   gap: 8px;
   padding: 6px 6px 6px 12px;
   font-weight: 600;
-  position: sticky;
-  top: 0;
   background: inherit;
 }
 #sidebar-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+#tree {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .tree-children {
