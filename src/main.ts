@@ -1064,6 +1064,13 @@ async function openTabFromPath(path: string): Promise<void> {
 }
 
 // ── Project mode (md-only file tree sidebar) ─────────────────────────────────
+const SVG_CHEVRON =
+  '<svg width="10" height="10" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const SVG_FOLDER =
+  '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M1.75 3.5A1.75 1.75 0 0 1 3.5 1.75h2.1c.47 0 .92.19 1.25.52l.88.88h4.77A1.75 1.75 0 0 1 14.25 4.9v7.35a1.75 1.75 0 0 1-1.75 1.75h-9a1.75 1.75 0 0 1-1.75-1.75z" fill="currentColor"/></svg>';
+const SVG_FILE =
+  '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M3.75 1.75h5.5l3 3v9a.75.75 0 0 1-.75.75h-7.75a.75.75 0 0 1-.75-.75v-11.25a.75.75 0 0 1 .75-.75z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5 11.2V8l1.6 1.9L8.2 8v3.2" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 interface TreeNode {
   name: string;
   path: string;
@@ -1165,18 +1172,23 @@ function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
     row.dataset.path = n.path;
     row.title = n.path;
 
+    const chevron = document.createElement('span');
+    chevron.className = 'tree-chevron';
     const icon = document.createElement('span');
     icon.className = 'tree-icon';
     const label = document.createElement('span');
     label.className = 'tree-label';
     label.textContent = n.name;
+    row.appendChild(chevron);
     row.appendChild(icon);
     row.appendChild(label);
     wrap.appendChild(row);
 
     if (n.is_dir) {
       const expanded = expandedPaths.has(n.path);
-      icon.textContent = expanded ? '▾' : '▸';
+      chevron.innerHTML = SVG_CHEVRON;
+      icon.innerHTML = SVG_FOLDER;
+      if (expanded) row.classList.add('expanded');
       row.addEventListener('click', () => {
         if (expandedPaths.has(n.path)) {
           expandedPaths.delete(n.path);
@@ -1189,6 +1201,7 @@ function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
         wrap.appendChild(buildTreeChildren(n.children));
       }
     } else {
+      icon.innerHTML = SVG_FILE;
       row.addEventListener('click', () => {
         void openTabFromPath(n.path);
       });
