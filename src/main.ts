@@ -172,6 +172,7 @@ interface Tab {
   content: string;
   blocks: string[];
   scrollY: number;
+  mtime?: number;
 }
 
 let tabs: Tab[] = [];
@@ -394,6 +395,10 @@ window.addEventListener('keydown', (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key === 'f') {
     e.preventDefault();
     triggerFind();
+  } else if ((e.metaKey || e.ctrlKey) && e.key === 'r') {
+    // Manual reload of the active tab — NOT a webview page reload.
+    e.preventDefault();
+    if (activePath) void reloadTab(activePath);
   } else if (e.key === 'Escape' && searchOpen) {
     e.preventDefault();
     closeSearchBar();
@@ -807,7 +812,7 @@ function _addTab(path: string, tabContent: string): Tab {
   if (existing) return existing;
   // basename: split on BOTH separators — Windows paths use `\`, POSIX uses `/`.
   const title = path.split(/[/\\]/).pop() || path;
-  const tab: Tab = { path, title, content: tabContent, blocks: [], scrollY: 0 };
+  const tab: Tab = { path, title, content: tabContent, blocks: [], scrollY: 0, mtime: 0 };
   tabs.push(tab);
   renderTabBar();
   return tab;
@@ -855,6 +860,15 @@ async function closeTab(path: string): Promise<void> {
   renderTabBar();
 }
 
+/** Fetch mtime for a path; null when unavailable (deleted, briefly missing). */
+async function fetchMtime(path: string): Promise<number | null> {
+  try {
+    return await invoke<number>('file_mtime', { path });
+  } catch {
+    return null;
+  }
+}
+
 async function reloadTab(path: string): Promise<void> {
   const tab = findTab(path);
   if (!tab) return;
@@ -862,7 +876,16 @@ async function reloadTab(path: string): Promise<void> {
   if (path === activePath) {
     tab.scrollY = window.scrollY;
   }
-  tab.content = await invoke<string>('read_file', { path });
+  // Atomic saves briefly remove the file; on read failure keep the current
+  // content — the watcher's next event or the mtime poll retries naturally.
+  let next: string;
+  try {
+    next = await invoke<string>('read_file', { path });
+  } catch {
+    return;
+  }
+  tab.content = next;
+  tab.mtime = (await fetchMtime(path)) ?? tab.mtime;
   if (path === activePath) {
     await renderActive(); // renderActive restores scrollY after mermaid
     if (viewMode === 'source') {
@@ -889,6 +912,8 @@ async function openTabFromPath(path: string): Promise<void> {
   const c = await invoke<string>('read_file', { path });
   pushRecent(path);
   _addTab(path, c);
+  const t = findTab(path);
+  if (t) t.mtime = (await fetchMtime(path)) ?? 0;
   await invoke('watch_file', { path });
   await activate(path);
 }
@@ -917,6 +942,20 @@ async function startTauri(): Promise<void> {
   await listen<{ path: string }>('file-changed', (e) => {
     void reloadTab(e.payload.path);
   });
+
+  // Polling fallback: environments where the notify watcher delivers no
+  // events (network drives, some Windows setups). mtime comparison keeps it
+  // idempotent with watcher-driven reloads (reloadTab refreshes tab.mtime).
+  const POLL_MS = 2000;
+  setInterval(() => {
+    for (const tab of tabs) {
+      void fetchMtime(tab.path).then((m) => {
+        if (m !== null && tab.mtime !== undefined && m !== tab.mtime) {
+          void reloadTab(tab.path);
+        }
+      });
+    }
+  }, POLL_MS);
 
   // Drag-drop
   getCurrentWebview().onDragDropEvent((event) => {
