@@ -578,6 +578,97 @@ html[data-mdview-theme='dark'] .search-btn:hover {
   color: #000000;
 }
 
+/* ── 프로젝트 모드: 파일트리 사이드바 ─────────────────────────────────────
+   고정 240px, sticky 툴바(min-height 44px) 아래에 fixed. 프로젝트 미오픈
+   시 hidden — 기존 단일 뷰어 레이아웃은 변하지 않는다. */
+#sidebar {
+  position: fixed;
+  top: 44px;
+  left: 0;
+  bottom: 0;
+  width: 240px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border-right: 1px solid;
+  font-size: 13px;
+  z-index: 50;
+  user-select: none;
+}
+body.project-open #content,
+body.project-open #editor {
+  margin-left: 240px;
+}
+html[data-mdview-theme='light'] #sidebar {
+  background: #f6f8fa;
+  border-color: #d1d9e0;
+  color: #1f2328;
+}
+html[data-mdview-theme='dark'] #sidebar {
+  background: #010409;
+  border-color: #3d444d;
+  color: #f0f6fc;
+}
+
+#sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 6px 6px 12px;
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: inherit;
+}
+#sidebar-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-children {
+  padding-left: 14px;
+}
+#tree > .tree-children {
+  padding-left: 0;
+}
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  border-radius: 4px;
+}
+html[data-mdview-theme='light'] .tree-row:hover {
+  background: #eaeef2;
+}
+html[data-mdview-theme='dark'] .tree-row:hover {
+  background: #161b22;
+}
+html[data-mdview-theme='light'] .tree-row.active {
+  background: #ddf4ff;
+}
+html[data-mdview-theme='dark'] .tree-row.active {
+  background: #1f6feb33;
+}
+.tree-icon {
+  width: 12px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 10px;
+  opacity: 0.7;
+}
+.tree-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-empty {
+  padding: 12px;
+  opacity: 0.6;
+}
+
 /* ── PDF export / print ─────────────────────────────────────────────────────
    Hide app chrome; print only the rendered document, always on white.
    Two triggers: @media print (Windows PrintToPdf runs a real print pipeline)
@@ -586,8 +677,13 @@ html[data-mdview-theme='dark'] .search-btn:hover {
 body.pdf-exporting #toolbar,
 body.pdf-exporting #search-bar,
 body.pdf-exporting #recent-menu,
+body.pdf-exporting #sidebar,
 body.pdf-exporting #editor {
   display: none !important;
+}
+/* 프로젝트 모드에서 PDF 캡처 시 본문이 사이드바만큼 밀려 있으면 안 된다. */
+body.pdf-exporting #content {
+  margin-left: 0 !important;
 }
 /* Per-page header/footer bands, absolutely positioned in document coords by
    decorateForPdf() so they land inside each sliced A4 page (macOS export). */
