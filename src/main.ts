@@ -1122,7 +1122,11 @@ async function openProject(root: string, silent = false): Promise<void> {
   document.body.classList.add('project-open');
   renderTree();
   localStorage.setItem(PROJECT_KEY, root);
-  await invoke('watch_dir', { root });
+  try {
+    await invoke('watch_dir', { root });
+  } catch (e) {
+    if (!silent) toast(`폴더 감시 실패: ${String(e)}`);
+  }
 }
 
 function closeProject(): void {
@@ -1141,6 +1145,7 @@ async function refreshTree(): Promise<void> {
   if (!projectRoot) return;
   try {
     const res = await invoke<ScanResult>('scan_tree', { root: projectRoot });
+    if (!projectRoot) return; // closed while scanning
     projectTree = res.tree;
     renderTree();
   } catch {

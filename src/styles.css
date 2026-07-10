@@ -722,6 +722,7 @@ body.pdf-exporting #content {
   #toolbar,
   #search-bar,
   #recent-menu,
+  #sidebar,
   #editor {
     display: none !important;
   }
