@@ -29,11 +29,25 @@ function readStoredMode(): ThemeMode {
   return 'system';
 }
 
+let exportOverride = false;
+
 function computeEffective(): EffectiveTheme {
+  if (exportOverride) {
+    return 'light';
+  }
   if (mode === 'system') {
     return darkQuery.matches ? 'dark' : 'light';
   }
   return mode;
+}
+
+/**
+ * PDF export는 항상 라이트로 출력한다. localStorage에 남기지 않는 임시
+ * 오버라이드 — apply()를 타므로 onChange(mermaid 재렌더 등)도 동일 발화.
+ */
+export function setExportOverride(on: boolean): void {
+  exportOverride = on;
+  apply();
 }
 
 function apply(): void {

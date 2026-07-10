@@ -577,3 +577,30 @@ html[data-mdview-theme='dark'] .search-btn:hover {
   background-color: rgba(255, 140, 0, 0.85);
   color: #000000;
 }
+
+/* ── PDF export / print ─────────────────────────────────────────────────────
+   Hide app chrome; print only the rendered document, always on white. */
+@media print {
+  #toolbar,
+  #search-bar,
+  #recent-menu,
+  #editor {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  #content {
+    display: block !important;
+    max-width: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  #content pre,
+  #content table,
+  #content .mermaid-block,
+  #content img {
+    break-inside: avoid;
+  }
+}
