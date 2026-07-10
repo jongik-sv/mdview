@@ -579,14 +579,17 @@ html[data-mdview-theme='dark'] .search-btn:hover {
 }
 
 /* ── 프로젝트 모드: 파일트리 사이드바 ─────────────────────────────────────
-   고정 240px, sticky 툴바(min-height 44px) 아래에 fixed. 프로젝트 미오픈
-   시 hidden — 기존 단일 뷰어 레이아웃은 변하지 않는다. */
+   sticky 툴바(min-height 44px) 아래에 fixed. 프로젝트 미오픈 시 hidden —
+   기존 단일 뷰어 레이아웃은 변하지 않는다. 폭은 --sidebar-w로 드래그 리사이즈. */
+:root {
+  --sidebar-w: 240px;
+}
 #sidebar {
   position: fixed;
   top: 44px;
   left: 0;
   bottom: 0;
-  width: 240px;
+  width: var(--sidebar-w);
   overflow-y: auto;
   overflow-x: hidden;
   border-right: 1px solid;
@@ -596,7 +599,25 @@ html[data-mdview-theme='dark'] .search-btn:hover {
 }
 body.project-open #content,
 body.project-open #editor {
-  margin-left: 240px;
+  margin-left: var(--sidebar-w);
+}
+
+/* 사이드바 우측 엣지 드래그 핸들 — #sidebar가 fixed라 absolute 자식은 여기에 앵커. */
+#sidebar-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 1;
+}
+#sidebar-resize:hover {
+  background: rgba(110, 150, 200, 0.35);
+}
+body.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
 }
 html[data-mdview-theme='light'] #sidebar {
   background: #f6f8fa;

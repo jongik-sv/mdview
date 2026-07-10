@@ -1261,6 +1261,39 @@ btnOpenFolder.addEventListener('click', async () => {
   }
 });
 
+// ── 사이드바 리사이즈 (드래그) ─────────────────────────────────────────────────
+const SIDEBAR_W_KEY = 'mdview-sidebar-width';
+const SIDEBAR_W_MIN = 160;
+const SIDEBAR_W_MAX = 480;
+const sidebarResize = document.querySelector<HTMLElement>('#sidebar-resize')!;
+
+function applySidebarWidth(px: number): void {
+  const w = Math.min(SIDEBAR_W_MAX, Math.max(SIDEBAR_W_MIN, Math.round(px)));
+  document.documentElement.style.setProperty('--sidebar-w', `${w}px`);
+}
+
+// 저장된 폭 복원 (프로젝트 여부와 무관 — CSS 변수만 세팅)
+const savedW = Number(localStorage.getItem(SIDEBAR_W_KEY));
+if (savedW) applySidebarWidth(savedW);
+
+// 우측 엣지 드래그 리사이즈 — HTML5 DnD는 dragDropEnabled가 삼키므로 pointer 이벤트 사용
+sidebarResize.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  sidebarResize.setPointerCapture(e.pointerId);
+  document.body.classList.add('sidebar-resizing');
+  const onMove = (ev: PointerEvent) => applySidebarWidth(ev.clientX);
+  const onUp = (ev: PointerEvent) => {
+    sidebarResize.removeEventListener('pointermove', onMove);
+    sidebarResize.removeEventListener('pointerup', onUp);
+    document.body.classList.remove('sidebar-resizing');
+    applySidebarWidth(ev.clientX);
+    const cur = getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w');
+    localStorage.setItem(SIDEBAR_W_KEY, String(parseInt(cur, 10) || 240));
+  };
+  sidebarResize.addEventListener('pointermove', onMove);
+  sidebarResize.addEventListener('pointerup', onUp);
+});
+
 // ── Theme init (before first render) ─────────────────────────────────────────
 function onThemeChange(effective: EffectiveTheme): void {
   effectiveTheme = effective;
