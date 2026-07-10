@@ -47,3 +47,6 @@ lopdf = "0.36"
 webview2-com = "0.38"
 windows = "0.61"
 
+[dev-dependencies]
+tempfile = "3"
+

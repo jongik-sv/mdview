@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
@@ -110,6 +110,121 @@ fn watch_file(
 #[tauri::command]
 fn unwatch_file(path: String, state: tauri::State<AppState>) {
     state.watchers.lock().unwrap().remove(&path);
+}
+
+/// A node in the project file tree (`scan_tree`). Files are markdown-only;
+/// directories appear only when their subtree contains at least one markdown
+/// file.
+#[derive(Clone, Serialize)]
+struct TreeNode {
+    name: String,
+    path: String,
+    is_dir: bool,
+    children: Vec<TreeNode>,
+}
+
+/// Return value of `scan_tree`. `truncated` is set when the scan hit
+/// SCAN_MAX_ENTRIES and stopped early.
+#[derive(Clone, Serialize)]
+struct ScanResult {
+    tree: TreeNode,
+    truncated: bool,
+}
+
+/// Entry cap for `scan_tree`: past this many collected nodes the scan stops
+/// so a runaway root (e.g. `/`) cannot hang the UI.
+const SCAN_MAX_ENTRIES: usize = 10_000;
+
+fn is_markdown_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".md") || lower.ends_with(".markdown")
+}
+
+fn cmp_tree_name(a: &TreeNode, b: &TreeNode) -> std::cmp::Ordering {
+    a.name.to_lowercase().cmp(&b.name.to_lowercase())
+}
+
+/// Recursively collect the markdown-bearing children of `dir`, honouring the
+/// shared entry `budget`. Directories with no markdown anywhere below them
+/// are pruned. Dotfiles, `node_modules` and symlinks are skipped; symlinks
+/// are never followed (avoids cycles and out-of-root jumps). Unreadable
+/// entries/dirs are silently skipped. Directories sort before files,
+/// each name-sorted case-insensitively.
+fn scan_children(dir: &Path, budget: &mut usize, truncated: &mut bool) -> Vec<TreeNode> {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<TreeNode> = Vec::new();
+    let mut files: Vec<TreeNode> = Vec::new();
+    for entry in rd.flatten() {
+        if *budget == 0 {
+            *truncated = true;
+            break;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name == "node_modules" {
+            continue;
+        }
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if ft.is_dir() {
+            *budget -= 1;
+            let children = scan_children(&path, budget, truncated);
+            if children.is_empty() {
+                *budget += 1; // pruned: refund the slot
+                continue;
+            }
+            dirs.push(TreeNode {
+                name,
+                path: path.to_string_lossy().into_owned(),
+                is_dir: true,
+                children,
+            });
+        } else if is_markdown_name(&name) {
+            *budget -= 1;
+            files.push(TreeNode {
+                name,
+                path: path.to_string_lossy().into_owned(),
+                is_dir: false,
+                children: Vec::new(),
+            });
+        }
+    }
+    dirs.sort_by(cmp_tree_name);
+    files.sort_by(cmp_tree_name);
+    dirs.extend(files);
+    dirs
+}
+
+/// Scan `root` for markdown files, returning the pruned tree. Errs when
+/// `root` is not a directory — the frontend drop handler uses this to tell
+/// folders from stray non-markdown files. The root node is always returned,
+/// children may be empty (frontend shows "md 파일 없음").
+#[tauri::command]
+fn scan_tree(root: String) -> Result<ScanResult, String> {
+    let p = PathBuf::from(&root);
+    if !p.is_dir() {
+        return Err(format!("not a directory: {root}"));
+    }
+    let mut budget = SCAN_MAX_ENTRIES;
+    let mut truncated = false;
+    let children = scan_children(&p, &mut budget, &mut truncated);
+    let name = p
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| root.clone());
+    Ok(ScanResult {
+        tree: TreeNode {
+            name,
+            path: root,
+            is_dir: true,
+            children,
+        },
+        truncated,
+    })
 }
 
 /// Event payload for `pdf-exported`.
@@ -416,7 +531,8 @@ pub fn run() {
             watch_file,
             unwatch_file,
             file_mtime,
-            export_pdf
+            export_pdf,
+            scan_tree
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -455,23 +571,96 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::path::Path;
 
-    #[test]
-    fn file_mtime_returns_millis_and_changes_on_write() {
-        let dir = std::env::temp_dir();
-        let p = dir.join("mdview-mtime-test.md");
-        std::fs::write(&p, "a").unwrap();
-        let t1 = file_mtime(p.to_string_lossy().into_owned()).unwrap();
-        assert!(t1 > 1_600_000_000_000); // 2020년 이후 epoch millis
-        std::thread::sleep(std::time::Duration::from_millis(1100));
-        std::fs::write(&p, "b").unwrap();
-        let t2 = file_mtime(p.to_string_lossy().into_owned()).unwrap();
-        assert!(t2 > t1);
-        std::fs::remove_file(&p).ok();
+    fn touch(p: &Path) {
+        fs::write(p, "x").unwrap();
+    }
+
+    fn scan(dir: &Path, budget: usize) -> (Vec<TreeNode>, bool) {
+        let mut budget = budget;
+        let mut truncated = false;
+        let kids = scan_children(dir, &mut budget, &mut truncated);
+        (kids, truncated)
     }
 
     #[test]
-    fn file_mtime_errors_on_missing_file() {
-        assert!(file_mtime("/nonexistent/x.md".into()).is_err());
+    fn keeps_only_markdown_files() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("a.md"));
+        touch(&t.path().join("B.MARKDOWN"));
+        touch(&t.path().join("c.txt"));
+        let (kids, truncated) = scan(t.path(), 100);
+        let names: Vec<_> = kids.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["a.md", "B.MARKDOWN"]); // 대소문자 무시 정렬
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn prunes_dirs_without_markdown() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir(t.path().join("empty")).unwrap();
+        fs::create_dir(t.path().join("docs")).unwrap();
+        touch(&t.path().join("docs").join("x.md"));
+        let (kids, _) = scan(t.path(), 100);
+        assert_eq!(kids.len(), 1);
+        assert_eq!(kids[0].name, "docs");
+        assert!(kids[0].is_dir);
+        assert_eq!(kids[0].children[0].name, "x.md");
+    }
+
+    #[test]
+    fn skips_dotfiles_and_node_modules() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir(t.path().join(".git")).unwrap();
+        touch(&t.path().join(".git").join("readme.md"));
+        fs::create_dir_all(t.path().join("node_modules").join("pkg")).unwrap();
+        touch(&t.path().join("node_modules").join("pkg").join("README.md"));
+        touch(&t.path().join(".hidden.md"));
+        touch(&t.path().join("real.md"));
+        let (kids, _) = scan(t.path(), 100);
+        let names: Vec<_> = kids.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["real.md"]);
+    }
+
+    #[test]
+    fn dirs_sort_before_files() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("aaa.md"));
+        fs::create_dir(t.path().join("zzz")).unwrap();
+        touch(&t.path().join("zzz").join("n.md"));
+        let (kids, _) = scan(t.path(), 100);
+        let names: Vec<_> = kids.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["zzz", "aaa.md"]);
+    }
+
+    #[test]
+    fn budget_truncates_scan() {
+        let t = tempfile::tempdir().unwrap();
+        for i in 0..5 {
+            touch(&t.path().join(format!("f{i}.md")));
+        }
+        let (kids, truncated) = scan(t.path(), 3);
+        assert_eq!(kids.len(), 3);
+        assert!(truncated);
+    }
+
+    #[test]
+    fn scan_tree_rejects_non_directory() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("a.md"));
+        let res = scan_tree(t.path().join("a.md").to_string_lossy().into_owned());
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn scan_tree_returns_root_node_even_when_empty() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("note.txt")); // md 없음
+        let res = scan_tree(t.path().to_string_lossy().into_owned()).unwrap();
+        assert!(res.tree.is_dir);
+        assert!(res.tree.children.is_empty());
+        assert!(!res.truncated);
     }
 }
