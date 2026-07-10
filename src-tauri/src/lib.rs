@@ -31,6 +31,7 @@ fn initial_buf() -> &'static Mutex<Vec<PathBuf>> {
 /// removes (drops) one when its tab closes.
 struct AppState {
     watchers: Mutex<HashMap<String, FileWatcher>>,
+    dir_watchers: Mutex<HashMap<String, FileWatcher>>,
 }
 
 /// Event payload for `file-opened` and `file-changed`.
@@ -225,6 +226,43 @@ fn scan_tree(root: String) -> Result<ScanResult, String> {
         },
         truncated,
     })
+}
+
+/// Start watching `root` recursively for the project tree. Any debounced
+/// change below it emits `tree-changed` (no payload — the frontend rescans
+/// the whole tree). Only one project is open at a time, so any previous dir
+/// watch is replaced (dropped).
+#[tauri::command]
+fn watch_dir(
+    root: String,
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+) -> Result<(), String> {
+    let handle = app.clone();
+    let mut debouncer = new_debouncer(
+        Duration::from_millis(500),
+        None,
+        move |res: DebounceEventResult| {
+            if res.is_ok() {
+                let _ = handle.emit("tree-changed", ());
+            }
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    debouncer
+        .watch(Path::new(&root), RecursiveMode::Recursive)
+        .map_err(|e| e.to_string())?;
+    let mut map = state.dir_watchers.lock().unwrap();
+    map.clear();
+    map.insert(root, debouncer);
+    Ok(())
+}
+
+/// Stop the project tree watch (project closed). Dropping the debouncer
+/// stops the underlying recursive watch.
+#[tauri::command]
+fn unwatch_dir(root: String, state: tauri::State<AppState>) {
+    state.dir_watchers.lock().unwrap().remove(&root);
 }
 
 /// Event payload for `pdf-exported`.
@@ -510,6 +548,7 @@ pub fn run() {
         .setup(|app| {
             app.manage(AppState {
                 watchers: Mutex::new(HashMap::new()),
+                dir_watchers: Mutex::new(HashMap::new()),
             });
             // Headless PDF smoke hook: MDVIEW_PDF_EXPORT_TEST=/path/out.pdf
             // asks the frontend to run its full export flow (theme override,
@@ -532,7 +571,9 @@ pub fn run() {
             unwatch_file,
             file_mtime,
             export_pdf,
-            scan_tree
+            scan_tree,
+            watch_dir,
+            unwatch_dir
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
