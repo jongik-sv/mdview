@@ -223,98 +223,10 @@ html[data-mdview-theme='dark'] .divider {
   opacity: 0.4;
 }
 
-/* Recent-files dropdown */
-#recent-menu {
-  position: fixed;
-  z-index: 9998;
-  min-width: 260px;
-  max-width: 70vw;
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: 4px;
-  border-radius: 8px;
-  border: 1px solid transparent;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
-}
-.recent-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  width: 100%;
-  padding: 6px 10px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-.recent-name {
-  font-size: 13px;
-  font-weight: 600;
-}
-.recent-path {
-  font-size: 11px;
-  opacity: 0.6;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-.recent-empty {
-  padding: 10px;
-  font-size: 13px;
-  opacity: 0.6;
-}
-.recent-clear {
-  width: 100%;
-  margin-top: 4px;
-  padding: 6px 10px;
-  border: none;
-  border-top: 1px solid transparent;
-  border-radius: 0 0 6px 6px;
-  background: transparent;
-  color: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  text-align: left;
-  opacity: 0.75;
-}
-
-html[data-mdview-theme='light'] #recent-menu {
-  background: #ffffff;
-  border-color: #d0d7de;
-}
-html[data-mdview-theme='light'] .recent-item:hover {
-  background: #f3f4f6;
-}
-html[data-mdview-theme='light'] .recent-clear {
-  border-top-color: #d0d7de;
-}
-html[data-mdview-theme='light'] .recent-clear:hover {
-  background: #f3f4f6;
-}
-
-html[data-mdview-theme='dark'] #recent-menu {
-  background: #21262d;
-  border-color: #30363d;
-  color: #e6edf3;
-}
-html[data-mdview-theme='dark'] .recent-item:hover {
-  background: #30363d;
-}
-html[data-mdview-theme='dark'] .recent-clear {
-  border-top-color: #30363d;
-}
-html[data-mdview-theme='dark'] .recent-clear:hover {
-  background: #30363d;
-}
-
 /* ── 탭 우클릭 컨텍스트 메뉴 ──────────────────────────────────────────────
    탭 우클릭 시 <body>에 append되어 position:fixed(inline left/top)로 뜨는 팝업.
-   #recent-menu와 동일 계열(배경/테두리/그림자/라운드)로 통일. display는 걸지
-   않으므로 전역 [hidden] { display:none !important } 규칙이 그대로 적용된다. */
+   display는 걸지 않으므로 전역 [hidden] { display:none !important } 규칙이
+   그대로 적용된다. */
 .ctx-menu {
   position: fixed;
   z-index: 9999;
@@ -708,6 +620,12 @@ html[data-mdview-theme='dark'] #sidebar {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+#sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
 
 /* ── 사이드바 트리/검색 탭 ─────────────────────────────────────────────── */
 #sidebar-tabs {
@@ -817,6 +735,29 @@ html[data-mdview-theme='dark'] .tree-file .tree-icon { color: #8b949e; }
 .tree-empty {
   padding: 12px;
   opacity: 0.6;
+}
+
+/* 과녁(reveal) 피드백 — 대상 행 2회 펄스. 애니메이션이 도는 동안에는
+   .active 배경 선언을 덮으므로 끝점은 transparent로 두어 깜빡임을 만든다. */
+html[data-mdview-theme='light'] {
+  --reveal-flash: rgba(9, 105, 218, 0.3);
+}
+html[data-mdview-theme='dark'] {
+  --reveal-flash: rgba(31, 111, 235, 0.45);
+}
+@keyframes reveal-flash {
+  0%,
+  50%,
+  100% {
+    background-color: transparent;
+  }
+  25%,
+  75% {
+    background-color: var(--reveal-flash);
+  }
+}
+.tree-row.reveal-flash {
+  animation: reveal-flash 0.9s ease-in-out;
 }
 
 /* ── 폴더 전체 검색 패널 ─────────────────────────────────────────────────
@@ -974,6 +915,100 @@ html[data-mdview-theme='dark'] :is(.sp-text, .sp-file-name) mark {
   font-size: 12.5px;
 }
 
+/* ── 히스토리 (최근 연 파일) — 트리/검색 아래 고정 섹션 ──────────────────
+   최대 RECENTS_MAX(10)개, 행 높이 24px 기준 max-height로 스크롤.
+   행 모양/hover/active 색은 .tree-row 토큰을 따른다. */
+#history {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid transparent;
+  padding-bottom: 6px; /* 하단 여백은 스크롤러 밖에 — 10행이 딱 맞게 */
+}
+html[data-mdview-theme='light'] #history {
+  border-top-color: #d0d7de;
+}
+html[data-mdview-theme='dark'] #history {
+  border-top-color: #3d444d;
+}
+#history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px 2px 12px;
+  font-size: 11.5px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+#history-resize {
+  height: 5px;
+  margin-bottom: -5px; /* 경계선 바로 아래 헤더 위에 겹치는 드래그 밴드 */
+  flex-shrink: 0;
+  cursor: row-resize;
+  z-index: 1;
+}
+#history-resize:hover {
+  background: rgba(110, 150, 200, 0.35);
+}
+body.history-resizing {
+  cursor: row-resize;
+  user-select: none;
+}
+#history-list {
+  /* --history-h: 드래그 리사이즈 상한 (24px × 2행 ~ 10행, 기본 10행).
+     창이 아주 낮으면 40vh 가드가 이긴다. 항목이 적으면 그만큼만 차지. */
+  max-height: min(var(--history-h, 240px), 40vh);
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 6px; /* 세로 패딩 금지 — max-height가 행 수와 정확히 맞아야 함 */
+}
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 3px 6px;
+  min-height: 24px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+html[data-mdview-theme='light'] .history-item:hover {
+  background: #eaeef2; /* .tree-row:hover와 동일 */
+}
+html[data-mdview-theme='dark'] .history-item:hover {
+  background: #161b22;
+}
+html[data-mdview-theme='light'] .history-item.active {
+  background: #ddf4ff; /* .tree-row.active와 동일 */
+}
+html[data-mdview-theme='dark'] .history-item.active {
+  background: #1f6feb33;
+}
+.history-icon {
+  width: 15px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+html[data-mdview-theme='light'] .history-icon { color: #737e8a; }
+html[data-mdview-theme='dark'] .history-icon { color: #8b949e; }
+.history-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+}
+.history-empty {
+  padding: 6px 12px 8px;
+  opacity: 0.6;
+  font-size: 12px;
+}
+
 /* ── PDF export / print ─────────────────────────────────────────────────────
    Hide app chrome; print only the rendered document, always on white.
    Two triggers: @media print (Windows PrintToPdf runs a real print pipeline)
@@ -981,7 +1016,6 @@ html[data-mdview-theme='dark'] :is(.sp-text, .sp-file-name) mark {
    frontend toggles this class around the export). */
 body.pdf-exporting #toolbar,
 body.pdf-exporting #search-bar,
-body.pdf-exporting #recent-menu,
 body.pdf-exporting .ctx-menu,
 body.pdf-exporting #sidebar,
 body.pdf-exporting #editor {
@@ -1007,7 +1041,6 @@ body.pdf-exporting #content {
 @media print {
   #toolbar,
   #search-bar,
-  #recent-menu,
   .ctx-menu,
   #sidebar,
   #editor {

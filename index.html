@@ -68,13 +68,6 @@
           </button>
         </div>
         <div class="divider"></div>
-        <button class="icon-btn" id="btn-recent" title="최근 열기">
-          <!-- clock / history icon -->
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <polyline points="12 6 12 12 16 14"/>
-          </svg>
-        </button>
         <button class="icon-btn" id="btn-pdf" title="PDF로 저장 (⌘P)">
           <!-- document-download icon -->
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -84,13 +77,6 @@
             <polyline points="9 15 12 18 15 15"/>
           </svg>
         </button>
-        <button class="icon-btn" id="btn-copy-path" title="전체 경로 복사">
-          <!-- clipboard-copy icon -->
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
-            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
-          </svg>
-        </button>
         <button class="icon-btn" id="btn-open" title="파일 열기 (+)">+</button>
       </div>
     </div>
@@ -98,16 +84,29 @@
     <aside id="sidebar" hidden>
       <div id="sidebar-header">
         <span id="sidebar-title"></span>
-        <button class="icon-btn" id="sidebar-open-folder" title="다른 폴더 열기">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-          </svg>
-        </button>
+        <span id="sidebar-actions">
+          <button class="icon-btn" id="btn-reveal" title="현재 문서를 트리에서 표시" disabled>
+            <!-- crosshair / target icon -->
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <circle cx="12" cy="12" r="7"/>
+              <circle cx="12" cy="12" r="2.5" fill="currentColor" stroke="none"/>
+              <line x1="12" y1="2" x2="12" y2="5"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+              <line x1="2" y1="12" x2="5" y2="12"/>
+              <line x1="19" y1="12" x2="22" y2="12"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="sidebar-open-folder" title="다른 폴더 열기">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+            </svg>
+          </button>
+        </span>
       </div>
       <!-- 트리/검색 탭 — 검색 상태는 탭을 오가도 유지된다 -->
       <div id="sidebar-tabs" role="tablist">
         <button class="stab active" id="stab-tree" role="tab" aria-selected="true" aria-controls="tree">트리</button>
-        <button class="stab" id="stab-search" role="tab" aria-selected="false" aria-controls="search-panel">검색</button>
+        <button class="stab" id="stab-search" role="tab" aria-selected="false" aria-controls="search-panel" title="검색 (F3)">검색</button>
       </div>
       <div id="tree"></div>
       <!-- 폴더 하위 전체 검색 패널 — 검색 탭이 열리면 #tree를 대신한다 -->
@@ -119,13 +118,24 @@
         <div id="sp-status"></div>
         <div id="sp-results"></div>
       </div>
+      <!-- 최근 연 파일 히스토리 — 트리/검색 아래 고정 섹션 (최대 10개, 스크롤) -->
+      <div id="history">
+        <div id="history-resize" title="크기 조절"></div>
+        <div id="history-head">
+          <span>히스토리</span>
+          <button class="icon-btn" id="history-clear" title="히스토리 지우기">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div id="history-list"></div>
+      </div>
       <div id="sidebar-resize" title="크기 조절"></div>
     </aside>
     <article id="content" class="markdown-body"></article>
     <div id="editor" hidden></div>
-
-    <!-- Recent-files dropdown (anchored under the clock button) -->
-    <div id="recent-menu" hidden></div>
 
     <!-- Custom find widget (rendered view), VS Code-like -->
     <div id="search-bar" hidden>

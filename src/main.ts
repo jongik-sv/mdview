@@ -32,10 +32,7 @@ const btnFontDec = document.querySelector<HTMLButtonElement>('#btn-font-dec')!;
 const btnFontInc = document.querySelector<HTMLButtonElement>('#btn-font-inc')!;
 const fontReadout = document.querySelector<HTMLButtonElement>('#font-readout')!;
 const btnOpen = document.querySelector<HTMLButtonElement>('#btn-open')!;
-const btnCopyPath = document.querySelector<HTMLButtonElement>('#btn-copy-path')!;
 const btnPdf = document.querySelector<HTMLButtonElement>('#btn-pdf')!;
-const btnRecent = document.querySelector<HTMLButtonElement>('#btn-recent')!;
-const recentMenu = document.querySelector<HTMLElement>('#recent-menu')!;
 const searchToggle = document.querySelector<HTMLButtonElement>('#search-toggle')!;
 
 // ── Link clicks (rendered view) ────────────────────────────────────────────────
@@ -410,6 +407,13 @@ window.addEventListener('keydown', (e) => {
   } else if ((e.metaKey || e.ctrlKey) && e.key === 'p') {
     e.preventDefault();
     void exportPdf();
+  } else if (e.key === 'F3') {
+    // 사이드바 검색 탭으로 이동. 프로젝트가 없으면 preventDefault도 하지
+    // 않는다 — 브라우저 하네스에서 F3 기본 동작(찾기)을 삼키지 않게.
+    if (!projectRoot) return;
+    e.preventDefault();
+    if (sidebar.hidden) showSidebar();
+    showSearchTab();
   } else if (e.key === 'Escape' && searchOpen) {
     e.preventDefault();
     closeSearchBar();
@@ -617,12 +621,7 @@ btnFontInc.addEventListener('click', () => setFontSize(fontPx + FONT_STEP));
 // steppers, so it never collides with rapid +/- clicking.
 fontReadout.addEventListener('click', () => setFontSize(FONT_DEFAULT));
 
-// ── Copy full path ────────────────────────────────────────────────────────────
-/** Enable the copy-path button only when a document is open. */
-function updateCopyPathBtn(): void {
-  btnCopyPath.disabled = activePath === null;
-}
-
+// ── Copy full path (탭 컨텍스트 메뉴 "경로 복사") ─────────────────────────────
 async function copyPathToClipboard(path: string): Promise<void> {
   try {
     // Under Tauri use the clipboard-manager plugin: navigator.clipboard.writeText
@@ -639,11 +638,6 @@ async function copyPathToClipboard(path: string): Promise<void> {
     toast('경로 복사 실패: ' + err);
   }
 }
-
-btnCopyPath.addEventListener('click', () => {
-  if (activePath === null) return;
-  void copyPathToClipboard(activePath);
-});
 
 // ── Recent files ──────────────────────────────────────────────────────────────
 // Persist the most-recently-opened paths in localStorage (most-recent first,
@@ -663,6 +657,7 @@ function loadRecents(): string[] {
 
 function saveRecents(list: string[]): void {
   localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, RECENTS_MAX)));
+  renderHistory(); // 기록 변경의 단일 경로 — 목록 UI도 여기서 항상 동기화
 }
 
 /** Record `path` as the most-recent entry (dedup, cap). */
@@ -677,86 +672,100 @@ function removeRecent(path: string): void {
   saveRecents(loadRecents().filter((p) => p !== path));
 }
 
-let recentOpen = false;
+// ── 히스토리 (사이드바 트리/검색 아래 최근 연 파일 목록) ────────────────────
+const historyList = document.querySelector<HTMLElement>('#history-list')!;
+const historyClear = document.querySelector<HTMLButtonElement>('#history-clear')!;
 
-function closeRecentMenu(): void {
-  recentOpen = false;
-  recentMenu.hidden = true;
-  btnRecent.classList.remove('active');
-}
-
-function buildRecentMenu(): void {
-  recentMenu.innerHTML = '';
+/// 히스토리 목록 재구축. saveRecents(모든 기록 변경의 단일 경로)와
+/// renderTabBar(활성 파일 표시 갱신)가 호출한다. 항목 수는 RECENTS_MAX 이하.
+function renderHistory(): void {
+  // 전체 재구축이라 스크롤이 0으로 튄다 — 보던 위치 저장/복원 (renderTree와 동일).
+  const scrollTop = historyList.scrollTop;
+  historyList.textContent = '';
   const list = loadRecents();
   if (list.length === 0) {
     const empty = document.createElement('div');
-    empty.className = 'recent-empty';
-    empty.textContent = '최근 항목 없음';
-    recentMenu.appendChild(empty);
+    empty.className = 'history-empty';
+    empty.textContent = '기록 없음';
+    historyList.appendChild(empty);
     return;
   }
   for (const path of list) {
     const item = document.createElement('button');
-    item.className = 'recent-item';
+    item.className = 'history-item' + (path === activePath ? ' active' : '');
     item.title = path;
 
+    const icon = document.createElement('span');
+    icon.className = 'history-icon';
+    icon.innerHTML = SVG_FILE;
     const name = document.createElement('span');
-    name.className = 'recent-name';
+    name.className = 'history-name';
     name.textContent = path.split(/[/\\]/).pop() || path;
 
-    const dir = document.createElement('span');
-    dir.className = 'recent-path';
-    dir.textContent = path;
-
+    item.appendChild(icon);
     item.appendChild(name);
-    item.appendChild(dir);
     item.addEventListener('click', () => {
-      closeRecentMenu();
       openTabFromPath(path).catch((err) => {
-        console.error('open recent failed:', path, err);
+        console.error('open history failed:', path, err);
         toast('파일 열기 실패 (목록서 제거): ' + path);
         removeRecent(path);
       });
     });
-    recentMenu.appendChild(item);
+    historyList.appendChild(item);
   }
-
-  const clear = document.createElement('button');
-  clear.className = 'recent-clear';
-  clear.textContent = '목록 지우기';
-  clear.addEventListener('click', () => {
-    saveRecents([]);
-    buildRecentMenu();
-  });
-  recentMenu.appendChild(clear);
+  historyList.scrollTop = scrollTop;
 }
 
-function openRecentMenu(): void {
-  buildRecentMenu();
-  // Anchor under the button, right edge aligned to the button's right edge
-  // (the button sits at the far right of the toolbar, so a left-anchored menu
-  // would overflow off the right side of the window).
-  const r = btnRecent.getBoundingClientRect();
-  recentMenu.style.top = r.bottom + 4 + 'px';
-  recentMenu.style.left = 'auto';
-  recentMenu.style.right = window.innerWidth - r.right + 'px';
-  recentMenu.hidden = false;
-  recentOpen = true;
-  btnRecent.classList.add('active');
+historyClear.addEventListener('click', () => saveRecents([]));
+
+// ── 히스토리 높이 리사이즈 (트리/검색과의 경계 드래그) ──────────────────────
+// 행(24px) 기준 최소 2행 ~ 최대 10행. --history-h는 #history-list의 max-height
+// 상한이라 항목이 적으면 그만큼만 차지한다. 사이드바 폭 리사이즈와 동일하게
+// pointer 이벤트 사용 (HTML5 DnD는 dragDropEnabled가 삼킨다).
+const HISTORY_H_KEY = 'mdview-history-h';
+const HISTORY_ROW_H = 24;
+const HISTORY_H_MIN = HISTORY_ROW_H * 2;
+const HISTORY_H_MAX = HISTORY_ROW_H * 10;
+const historyResize = document.querySelector<HTMLElement>('#history-resize')!;
+
+function applyHistoryHeight(px: number): void {
+  const h = Math.min(HISTORY_H_MAX, Math.max(HISTORY_H_MIN, Math.round(px)));
+  document.documentElement.style.setProperty('--history-h', `${h}px`);
 }
 
-btnRecent.addEventListener('click', (e) => {
-  e.stopPropagation();
-  if (recentOpen) closeRecentMenu();
-  else openRecentMenu();
-});
+const savedHistoryH = Number(localStorage.getItem(HISTORY_H_KEY));
+if (savedHistoryH) applyHistoryHeight(savedHistoryH);
 
-// Close on outside click / Esc.
-document.addEventListener('click', (e) => {
-  if (recentOpen && !recentMenu.contains(e.target as Node)) closeRecentMenu();
-});
-window.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && recentOpen) closeRecentMenu();
+historyResize.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  historyResize.setPointerCapture(e.pointerId);
+  document.body.classList.add('history-resizing');
+  const startY = e.clientY;
+  const startH = historyList.getBoundingClientRect().height;
+  const onMove = (ev: PointerEvent) => applyHistoryHeight(startH + (startY - ev.clientY));
+  const cleanup = () => {
+    historyResize.removeEventListener('pointermove', onMove);
+    historyResize.removeEventListener('pointerup', onUp);
+    historyResize.removeEventListener('pointercancel', onCancel);
+    document.body.classList.remove('history-resizing');
+  };
+  const persist = () => {
+    const cur = getComputedStyle(document.documentElement).getPropertyValue('--history-h');
+    localStorage.setItem(HISTORY_H_KEY, String(parseInt(cur, 10) || HISTORY_H_MAX));
+  };
+  const onUp = (ev: PointerEvent) => {
+    cleanup();
+    applyHistoryHeight(startH + (startY - ev.clientY));
+    persist();
+  };
+  // 드래그 중 취소(제스처 인터럽트 등) 시에도 리스너·클래스가 남지 않게 정리.
+  const onCancel = () => {
+    cleanup();
+    persist();
+  };
+  historyResize.addEventListener('pointermove', onMove);
+  historyResize.addEventListener('pointerup', onUp);
+  historyResize.addEventListener('pointercancel', onCancel);
 });
 
 // ── Theme toggle ──────────────────────────────────────────────────────────────
@@ -933,7 +942,8 @@ function renderTabBar(): void {
   }
   // Keep the active tab visible when the strip overflows (open/switch scrolls to it).
   activeEl?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
-  updateCopyPathBtn();
+  btnReveal.disabled = activePath === null; // 문서 없으면 과녁 비활성
+  renderHistory(); // 히스토리의 활성 파일 표시 갱신
   updateTreeHighlight(true); // 탭 전환은 트리도 활성 파일 위치로 따라간다
 }
 
@@ -1227,6 +1237,7 @@ const sidebarTitle = document.querySelector<HTMLElement>('#sidebar-title')!;
 const treeEl = document.querySelector<HTMLElement>('#tree')!;
 const btnTree = document.querySelector<HTMLButtonElement>('#btn-tree')!;
 const sidebarOpenFolder = document.querySelector<HTMLButtonElement>('#sidebar-open-folder')!;
+const btnReveal = document.querySelector<HTMLButtonElement>('#btn-reveal')!;
 
 const PROJECT_KEY = 'mdview-project';
 const SIDEBAR_HIDDEN_KEY = 'mdview-sidebar-hidden';
@@ -1612,6 +1623,81 @@ function updateTreeHighlight(scroll = false): void {
   }
 }
 
+/// 과녁 버튼: 활성 문서를 트리에서 드러낸다 — 루트까지의 조상 dir를 모두
+/// 펼치고(미로드분은 scan_dir로 lazy 로드) 트리 탭으로 전환, 해당 행으로 스크롤.
+/// retried: 로드 중 refreshTree가 캐시를 갈아엎어(세대 변경) 조상 캐시가
+/// 증발한 경우 한 번만 재시도 (expandDirDeep과 동일한 패턴).
+async function revealActiveInTree(retried = false): Promise<void> {
+  const path = activePath;
+  const root = projectRoot;
+  if (!path || !root) return;
+  if (!isUnderDir(root, path)) {
+    toast('현재 문서가 프로젝트 폴더 밖에 있습니다');
+    return;
+  }
+  if (sidebar.hidden) showSidebar();
+  showTreeTab();
+  // 파일 → 루트 직전까지의 조상 dir 체인 (경로 문자열로 계산, 구분자 무추측).
+  const rootN = root.replace(/[/\\]+$/, '');
+  const dirs: string[] = [];
+  let cur = path;
+  for (;;) {
+    const parent = cur
+      .replace(/[/\\]+$/, '')
+      .replace(/[^/\\]*$/, '')
+      .replace(/[/\\]+$/, '');
+    if (parent === rootN || parent === '' || parent === cur) break;
+    dirs.unshift(parent);
+    cur = parent;
+  }
+  const seq = treeRefreshSeq;
+  const missing = dirs.filter((d) => !loadedChildren.has(d));
+  if (missing.length > 0) {
+    const results = await Promise.all(missing.map((d) => scanDir(d).catch(() => null)));
+    // 로드 중 프로젝트 교체/닫힘, 활성 탭 변경, 검색 탭 전환 — 이 reveal은 무효.
+    if (projectRoot !== root || activePath !== path || treeEl.hidden) return;
+    let truncated = false;
+    missing.forEach((d, i) => {
+      const r = results[i];
+      if (r) {
+        loadedChildren.set(d, r.children);
+        if (r.truncated) truncated = true;
+      }
+    });
+    if (truncated) toast('항목이 많아 트리를 일부만 표시합니다');
+  }
+  // 로드 중 refreshTree/refreshDir가 겹쳐 조상 캐시가 증발했을 수 있다
+  // (expanded도 아니고 보이지도 않던 dir는 스냅샷에서 빠진다) — 재시도.
+  if (treeRefreshSeq !== seq && dirs.some((d) => !loadedChildren.has(d))) {
+    if (!retried) void revealActiveInTree(true);
+    return;
+  }
+  // 캐시가 확보된 dir만 펼친다 (스캔 실패 dir를 펼치면 "영영 빈" 행이 된다).
+  for (const d of dirs) {
+    if (loadedChildren.has(d)) expandedPaths.add(d);
+  }
+  renderTree();
+  updateTreeHighlight(true);
+  flashTreeRow(path); // 이미 다 펼쳐져 있던 경우에도 "찾았다"는 피드백
+}
+
+/// reveal 피드백: 대상 행을 잠깐 펄스시킨다 (클릭해도 변화가 안 보이는
+/// "이미 보이던 파일" 케이스에서 특히 필요).
+function flashTreeRow(path: string): void {
+  const row = treeEl.querySelector<HTMLElement>(
+    `.tree-file[data-path="${CSS.escape(path)}"]`,
+  );
+  if (!row) return;
+  row.classList.remove('reveal-flash');
+  void row.offsetWidth; // 연타 시 애니메이션 재시작을 위한 리플로우
+  row.classList.add('reveal-flash');
+  row.addEventListener('animationend', () => row.classList.remove('reveal-flash'), {
+    once: true,
+  });
+}
+
+btnReveal.addEventListener('click', () => void revealActiveInTree());
+
 // ☰ 하나로 통합: 프로젝트 없으면 폴더 선택, 있으면 트리 토글.
 btnTree.addEventListener('click', async () => {
   if (projectRoot) {
@@ -1905,7 +1991,7 @@ function onThemeChange(effective: EffectiveTheme): void {
 effectiveTheme = initTheme(onThemeChange);
 updateThemeButtons();
 applyFontSize();
-updateCopyPathBtn();
+renderHistory();
 
 // ── Startup ───────────────────────────────────────────────────────────────────
 async function startTauri(): Promise<void> {
