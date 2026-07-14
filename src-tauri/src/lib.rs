@@ -1493,6 +1493,66 @@ mod tests {
         assert!(res.truncated);
     }
 
+    /// watch_file과 동일한 구성(부모 dir NonRecursive + 파일명 필터 + NoCache)
+    /// 으로 plain write 이벤트가 배달되는지. NoCache 전환(0.1.7) 회귀 가드.
+    #[test]
+    fn md_debouncer_delivers_plain_write() {
+        let t = tempfile::tempdir().unwrap();
+        let file = t.path().join("watched.md");
+        fs::write(&file, "v1").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fname = file.file_name().unwrap().to_os_string();
+        let mut d = md_debouncer(200, move |res: DebounceEventResult| {
+            if let Ok(events) = res {
+                let hit = events
+                    .iter()
+                    .any(|e| e.paths.iter().any(|p| p.file_name() == Some(fname.as_os_str())));
+                if hit {
+                    let _ = tx.send(());
+                }
+            }
+        })
+        .unwrap();
+        d.watch(t.path(), RecursiveMode::NonRecursive).unwrap();
+        thread::sleep(Duration::from_millis(500)); // FSEvents 스트림 기동 여유
+        fs::write(&file, "v2").unwrap();
+        assert!(
+            rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "plain write: watcher delivered no event"
+        );
+    }
+
+    /// 에디터 atomic save(임시파일 write 후 rename) 이벤트 배달 — rename 스티칭
+    /// 캐시(FileIdMap) 없이도 최종 파일명으로 이벤트가 와야 한다.
+    #[test]
+    fn md_debouncer_delivers_atomic_save_rename() {
+        let t = tempfile::tempdir().unwrap();
+        let file = t.path().join("watched.md");
+        fs::write(&file, "v1").unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let fname = file.file_name().unwrap().to_os_string();
+        let mut d = md_debouncer(200, move |res: DebounceEventResult| {
+            if let Ok(events) = res {
+                let hit = events
+                    .iter()
+                    .any(|e| e.paths.iter().any(|p| p.file_name() == Some(fname.as_os_str())));
+                if hit {
+                    let _ = tx.send(());
+                }
+            }
+        })
+        .unwrap();
+        d.watch(t.path(), RecursiveMode::NonRecursive).unwrap();
+        thread::sleep(Duration::from_millis(500));
+        let tmp = t.path().join(".watched.md.tmp");
+        fs::write(&tmp, "v2").unwrap();
+        fs::rename(&tmp, &file).unwrap();
+        assert!(
+            rx.recv_timeout(Duration::from_secs(5)).is_ok(),
+            "atomic save: watcher delivered no event"
+        );
+    }
+
     #[test]
     fn file_mtime_returns_millis_and_changes_on_write() {
         let dir = std::env::temp_dir();
