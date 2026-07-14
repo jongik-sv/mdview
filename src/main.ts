@@ -623,22 +623,26 @@ function updateCopyPathBtn(): void {
   btnCopyPath.disabled = activePath === null;
 }
 
-btnCopyPath.addEventListener('click', async () => {
-  if (activePath === null) return;
+async function copyPathToClipboard(path: string): Promise<void> {
   try {
     // Under Tauri use the clipboard-manager plugin: navigator.clipboard.writeText
     // resolves but silently fails to write in WKWebView, so the path never lands
     // on the system clipboard. Fall back to the web API in the browser harness.
     if (isTauri) {
-      await clipboardWriteText(activePath);
+      await clipboardWriteText(path);
     } else {
-      await navigator.clipboard.writeText(activePath);
+      await navigator.clipboard.writeText(path);
     }
-    toast('경로 복사됨: ' + activePath);
+    toast('경로 복사됨: ' + path);
   } catch (err) {
     console.error('clipboard write failed:', err);
     toast('경로 복사 실패: ' + err);
   }
+}
+
+btnCopyPath.addEventListener('click', () => {
+  if (activePath === null) return;
+  void copyPathToClipboard(activePath);
 });
 
 // ── Recent files ──────────────────────────────────────────────────────────────
@@ -1094,6 +1098,8 @@ function openTabMenu(e: MouseEvent, path: string): void {
     { label: '오른쪽 탭 닫기', enabled: right.length > 0, action: () => void closeTabs(right) },
     'sep',
     { label: '모든 탭 닫기', action: () => void closeTabs(tabs.map((t) => t.path)) },
+    'sep',
+    { label: '경로 복사', action: () => void copyPathToClipboard(path) },
   ]);
 }
 
