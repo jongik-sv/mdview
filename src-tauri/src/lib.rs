@@ -6,10 +6,32 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{Emitter, Manager};
 
-use notify_debouncer_full::notify::{RecommendedWatcher, RecursiveMode};
-use notify_debouncer_full::{new_debouncer, DebounceEventResult, Debouncer, RecommendedCache};
+use notify_debouncer_full::notify::{Config, RecommendedWatcher, RecursiveMode};
+use notify_debouncer_full::{
+    new_debouncer_opt, DebounceEventHandler, DebounceEventResult, Debouncer, NoCache,
+};
 
-type FileWatcher = Debouncer<RecommendedWatcher, RecommendedCache>;
+/// 반드시 NoCache: macOS 기본 RecommendedCache(FileIdMap)는 watch 시작 시
+/// walkdir로 트리 전체를 돌며 파일마다 stat해 파일ID를 모은다(rename 스티칭용).
+/// 대형 폴더(수십만~수백만 파일)에선 프로젝트 열기가 수십 초씩 걸리는 원인이
+/// 됐다. 우리는 이벤트 내용(rename 추적)을 전혀 보지 않고 "뭔가 바뀜"만 쓰므로
+/// 캐시는 순수 낭비다.
+type FileWatcher = Debouncer<RecommendedWatcher, NoCache>;
+
+/// 공통 debouncer 생성 — NoCache 강제 (위 주석 참조).
+fn md_debouncer<F: DebounceEventHandler>(
+    timeout_ms: u64,
+    handler: F,
+) -> Result<FileWatcher, String> {
+    new_debouncer_opt::<F, RecommendedWatcher, NoCache>(
+        Duration::from_millis(timeout_ms),
+        None,
+        handler,
+        NoCache::new(),
+        Config::default(),
+    )
+    .map_err(|e| e.to_string())
+}
 
 /// Process-global buffer of file paths to open at startup.
 ///
@@ -75,26 +97,21 @@ fn watch_file(
     let emit_path = path.clone();
     let handle = app.clone();
 
-    let mut debouncer = new_debouncer(
-        Duration::from_millis(200),
-        None,
-        move |res: DebounceEventResult| {
-            if let Ok(events) = res {
-                let hit = events
-                    .iter()
-                    .any(|e| e.paths.iter().any(|p| p.file_name() == Some(fname.as_os_str())));
-                if hit {
-                    let _ = handle.emit(
-                        "file-changed",
-                        FilePayload {
-                            path: emit_path.clone(),
-                        },
-                    );
-                }
+    let mut debouncer = md_debouncer(200, move |res: DebounceEventResult| {
+        if let Ok(events) = res {
+            let hit = events
+                .iter()
+                .any(|e| e.paths.iter().any(|p| p.file_name() == Some(fname.as_os_str())));
+            if hit {
+                let _ = handle.emit(
+                    "file-changed",
+                    FilePayload {
+                        path: emit_path.clone(),
+                    },
+                );
             }
-        },
-    )
-    .map_err(|e| e.to_string())?;
+        }
+    })?;
 
     debouncer
         .watch(&parent, RecursiveMode::NonRecursive)
@@ -637,27 +654,29 @@ impl Searcher {
 /// Start watching `root` recursively for the project tree. Any debounced
 /// change below it emits `tree-changed` (no payload — the frontend rescans
 /// the whole tree). Only one project is open at a time, so any previous dir
-/// watch is replaced (dropped).
+/// watch is replaced (dropped). Async + blocking thread: watch 시작이 느린
+/// 볼륨에서도 메인스레드(UI)를 잡지 않게 한다 (NoCache라 워크는 없지만
+/// FSEvents 등록/해제 자체도 메인스레드 밖으로).
 #[tauri::command]
-fn watch_dir(
+async fn watch_dir(
     root: String,
     app: tauri::AppHandle,
-    state: tauri::State<AppState>,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
     let handle = app.clone();
-    let mut debouncer = new_debouncer(
-        Duration::from_millis(500),
-        None,
-        move |res: DebounceEventResult| {
+    let watch_root = root.clone();
+    let debouncer = tauri::async_runtime::spawn_blocking(move || -> Result<FileWatcher, String> {
+        let mut d = md_debouncer(500, move |res: DebounceEventResult| {
             if res.is_ok() {
                 let _ = handle.emit("tree-changed", ());
             }
-        },
-    )
-    .map_err(|e| e.to_string())?;
-    debouncer
-        .watch(Path::new(&root), RecursiveMode::Recursive)
-        .map_err(|e| e.to_string())?;
+        })?;
+        d.watch(Path::new(&watch_root), RecursiveMode::Recursive)
+            .map_err(|e| e.to_string())?;
+        Ok(d)
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     let mut map = state.dir_watchers.lock().unwrap();
     map.clear();
     map.insert(root, debouncer);
