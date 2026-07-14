@@ -955,12 +955,13 @@ body.history-resizing {
   user-select: none;
 }
 #history-list {
-  /* --history-h: 드래그 리사이즈 상한 (24px × 2행 ~ 10행, 기본 10행).
-     창이 아주 낮으면 40vh 가드가 이긴다. 항목이 적으면 그만큼만 차지. */
-  max-height: min(var(--history-h, 240px), 40vh);
+  /* --history-h: 드래그 리사이즈 높이 (최소 2행 48px, 기본 10행 240px).
+     고정 height — 항목이 적거나 없어도 패널 크기 유지. 상한은 드래그 시점에
+     JS가 사이드바 절반으로 클램프하고, 이후 창이 줄어드는 경우만 50vh 가드. */
+  height: min(var(--history-h, 240px), 50vh);
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 0 6px; /* 세로 패딩 금지 — max-height가 행 수와 정확히 맞아야 함 */
+  padding: 0 6px; /* 세로 패딩 금지 — height가 행 수와 정확히 맞아야 함 */
 }
 .history-item {
   display: flex;

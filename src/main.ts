@@ -719,22 +719,30 @@ function renderHistory(): void {
 historyClear.addEventListener('click', () => saveRecents([]));
 
 // ── 히스토리 높이 리사이즈 (트리/검색과의 경계 드래그) ──────────────────────
-// 행(24px) 기준 최소 2행 ~ 최대 10행. --history-h는 #history-list의 max-height
-// 상한이라 항목이 적으면 그만큼만 차지한다. 사이드바 폭 리사이즈와 동일하게
-// pointer 이벤트 사용 (HTML5 DnD는 dragDropEnabled가 삼킨다).
+// 최소 2행(48px) ~ 최대 사이드바 높이의 절반. --history-h는 #history-list의
+// 고정 height라 항목이 적거나 없어도 패널 크기가 유지된다. 사이드바 폭
+// 리사이즈와 동일하게 pointer 이벤트 사용 (HTML5 DnD는 dragDropEnabled가 삼킨다).
 const HISTORY_H_KEY = 'mdview-history-h';
-const HISTORY_ROW_H = 24;
-const HISTORY_H_MIN = HISTORY_ROW_H * 2;
-const HISTORY_H_MAX = HISTORY_ROW_H * 10;
+const HISTORY_H_MIN = 48; // 2행
+const HISTORY_H_DEFAULT = 240; // 10행 (CSS var 기본값과 동일)
 const historyResize = document.querySelector<HTMLElement>('#history-resize')!;
 
+/// 드래그 시점 전용 — 상한(사이드바 절반)은 그때의 실제 높이로 계산한다.
+/// (시작 시 저장값 복원은 사이드바가 아직 hidden이라 CSS 50vh 가드에 맡긴다)
 function applyHistoryHeight(px: number): void {
-  const h = Math.min(HISTORY_H_MAX, Math.max(HISTORY_H_MIN, Math.round(px)));
+  const half = Math.floor(sidebar.clientHeight / 2);
+  const max = Math.max(HISTORY_H_MIN, half);
+  const h = Math.min(max, Math.max(HISTORY_H_MIN, Math.round(px)));
   document.documentElement.style.setProperty('--history-h', `${h}px`);
 }
 
 const savedHistoryH = Number(localStorage.getItem(HISTORY_H_KEY));
-if (savedHistoryH) applyHistoryHeight(savedHistoryH);
+if (savedHistoryH) {
+  document.documentElement.style.setProperty(
+    '--history-h',
+    `${Math.max(HISTORY_H_MIN, Math.round(savedHistoryH))}px`,
+  );
+}
 
 historyResize.addEventListener('pointerdown', (e) => {
   e.preventDefault();
@@ -751,7 +759,7 @@ historyResize.addEventListener('pointerdown', (e) => {
   };
   const persist = () => {
     const cur = getComputedStyle(document.documentElement).getPropertyValue('--history-h');
-    localStorage.setItem(HISTORY_H_KEY, String(parseInt(cur, 10) || HISTORY_H_MAX));
+    localStorage.setItem(HISTORY_H_KEY, String(parseInt(cur, 10) || HISTORY_H_DEFAULT));
   };
   const onUp = (ev: PointerEvent) => {
     cleanup();
