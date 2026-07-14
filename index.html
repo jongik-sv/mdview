@@ -104,7 +104,21 @@
           </svg>
         </button>
       </div>
+      <!-- 트리/검색 탭 — 검색 상태는 탭을 오가도 유지된다 -->
+      <div id="sidebar-tabs" role="tablist">
+        <button class="stab active" id="stab-tree" role="tab" aria-selected="true" aria-controls="tree">트리</button>
+        <button class="stab" id="stab-search" role="tab" aria-selected="false" aria-controls="search-panel">검색</button>
+      </div>
       <div id="tree"></div>
+      <!-- 폴더 하위 전체 검색 패널 — 검색 탭이 열리면 #tree를 대신한다 -->
+      <div id="search-panel" hidden>
+        <div id="sp-head">
+          <span id="sp-scope"></span>
+        </div>
+        <input id="sp-input" type="text" placeholder="하위 폴더 전체 검색" spellcheck="false" autocomplete="off" />
+        <div id="sp-status"></div>
+        <div id="sp-results"></div>
+      </div>
       <div id="sidebar-resize" title="크기 조절"></div>
     </aside>
     <article id="content" class="markdown-body"></article>

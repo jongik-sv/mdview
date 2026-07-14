@@ -895,6 +895,13 @@ function renderTabBar(): void {
     // the window has `dragDropEnabled` (OS-level file drop for opening .md), which
     // swallows in-page HTML5 drag events on some platforms (notably Windows).
     el.addEventListener('pointerdown', (e) => startTabDrag(e, tab.path));
+    // stopPropagation: window의 contextmenu 리스너(열린 메뉴 정리)가 bubble로
+    // 나중에 실행돼 방금 연 메뉴를 도로 닫는 것을 막는다.
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openTabMenu(e, tab.path);
+    });
 
     const title = document.createElement('span');
     title.className = 'tab-title';
@@ -1005,6 +1012,112 @@ async function closeTab(path: string): Promise<void> {
   renderTabBar();
 }
 
+/** Close several tabs at once (context menu bulk actions). */
+async function closeTabs(paths: string[]): Promise<void> {
+  if (paths.length === 0) return;
+  const closing = new Set(paths);
+  if (isTauri) {
+    await Promise.all(paths.map((p) => invoke('unwatch_file', { path: p })));
+  }
+  const oldIdx = activePath ? tabs.findIndex((t) => t.path === activePath) : -1;
+  const closingActive = activePath !== null && closing.has(activePath);
+  tabs = tabs.filter((t) => !closing.has(t.path));
+  if (closingActive) {
+    if (tabs.length === 0) {
+      activePath = null;
+      await renderActive();
+    } else {
+      const nextIdx = Math.min(Math.max(oldIdx, 0), tabs.length - 1);
+      const nextPath = tabs[nextIdx].path;
+      activePath = null; // reset so activate doesn't short-circuit
+      await activate(nextPath);
+    }
+  }
+  renderTabBar();
+}
+
+// ── Context menu (shared: tabs, tree dirs) ───────────────────────────────────
+// Custom right-click menu. Inapplicable items are disabled (greyed), not hidden.
+type CtxEntry = { label: string; enabled?: boolean; action: () => void } | 'sep';
+
+const ctxMenu = document.createElement('div');
+ctxMenu.className = 'ctx-menu';
+ctxMenu.hidden = true;
+document.body.appendChild(ctxMenu);
+let ctxMenuOpen = false;
+
+function closeCtxMenu(): void {
+  ctxMenuOpen = false;
+  ctxMenu.hidden = true;
+}
+
+function openCtxMenu(e: MouseEvent, entries: CtxEntry[]): void {
+  ctxMenu.innerHTML = '';
+  for (const entry of entries) {
+    if (entry === 'sep') {
+      const sep = document.createElement('div');
+      sep.className = 'ctx-sep';
+      ctxMenu.appendChild(sep);
+      continue;
+    }
+    const btn = document.createElement('button');
+    btn.className = 'ctx-item';
+    btn.textContent = entry.label;
+    btn.disabled = entry.enabled === false;
+    btn.addEventListener('click', () => {
+      closeCtxMenu();
+      entry.action();
+    });
+    ctxMenu.appendChild(btn);
+  }
+  // Show first so offsetWidth/Height are measurable, then clamp to viewport.
+  ctxMenu.hidden = false;
+  ctxMenuOpen = true;
+  ctxMenu.style.left = Math.max(0, Math.min(e.clientX, window.innerWidth - ctxMenu.offsetWidth - 4)) + 'px';
+  ctxMenu.style.top = Math.max(0, Math.min(e.clientY, window.innerHeight - ctxMenu.offsetHeight - 4)) + 'px';
+}
+
+function openTabMenu(e: MouseEvent, path: string): void {
+  const idx = tabs.findIndex((t) => t.path === path);
+  if (idx === -1) return;
+  const left = tabs.slice(0, idx).map((t) => t.path);
+  const right = tabs.slice(idx + 1).map((t) => t.path);
+  openCtxMenu(e, [
+    { label: '닫기', action: () => void closeTab(path) },
+    {
+      label: '다른 탭 닫기',
+      enabled: left.length + right.length > 0,
+      action: () => void closeTabs([...left, ...right]),
+    },
+    'sep',
+    { label: '왼쪽 탭 닫기', enabled: left.length > 0, action: () => void closeTabs(left) },
+    { label: '오른쪽 탭 닫기', enabled: right.length > 0, action: () => void closeTabs(right) },
+    'sep',
+    { label: '모든 탭 닫기', action: () => void closeTabs(tabs.map((t) => t.path)) },
+  ]);
+}
+
+document.addEventListener('click', (e) => {
+  if (ctxMenuOpen && !ctxMenu.contains(e.target as Node)) closeCtxMenu();
+});
+// capture + stopImmediatePropagation: 메뉴가 열린 상태의 Esc는 메뉴만 닫아야
+// 한다 — 먼저 등록된 bubble 핸들러(문서 내 찾기 닫기)까지 내려가면 안 됨.
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (e.key === 'Escape' && ctxMenuOpen) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      closeCtxMenu();
+    }
+  },
+  { capture: true },
+);
+// 다른 곳 우클릭 시 열린 메뉴 정리 (탭/트리 위 우클릭은 이후 리스너가 다시 연다).
+window.addEventListener('contextmenu', () => {
+  if (ctxMenuOpen) closeCtxMenu();
+});
+
 /** Fetch mtime for a path; null when unavailable (deleted, briefly missing). */
 async function fetchMtime(path: string): Promise<number | null> {
   try {
@@ -1075,10 +1188,31 @@ interface TreeNode {
   name: string;
   path: string;
   is_dir: boolean;
+}
+interface ScanDirResult {
+  children: TreeNode[];
+  truncated: boolean;
+}
+interface DeepDir {
+  path: string;
   children: TreeNode[];
 }
-interface ScanResult {
-  tree: TreeNode;
+interface DeepScanResult {
+  dirs: DeepDir[];
+  truncated: boolean;
+}
+interface SearchMatch {
+  line: number;
+  text: string;
+}
+interface SearchFile {
+  path: string;
+  name: string;
+  name_match: boolean;
+  matches: SearchMatch[];
+}
+interface SearchResult {
+  files: SearchFile[];
   truncated: boolean;
 }
 
@@ -1091,8 +1225,18 @@ const sidebarOpenFolder = document.querySelector<HTMLButtonElement>('#sidebar-op
 const PROJECT_KEY = 'mdview-project';
 const SIDEBAR_HIDDEN_KEY = 'mdview-sidebar-hidden';
 let projectRoot: string | null = null;
-let projectTree: TreeNode | null = null;
 const expandedPaths = new Set<string>();
+// Lazy tree: children are fetched per directory on expand (scan_dir), keyed by
+// dir path (project root included). Entries persist across collapse so nested
+// expand state survives; refreshTree rebuilds the map from root+expandedPaths.
+const loadedChildren = new Map<string, TreeNode[]>();
+// refreshTree/refreshDir 겹침 가드: await 후 세대가 바뀌었으면 결과를 버린다.
+// (openProject/closeProject/각 refresh 시작이 세대를 올린다)
+let treeRefreshSeq = 0;
+
+async function scanDir(dir: string): Promise<ScanDirResult> {
+  return await invoke<ScanDirResult>('scan_dir', { dir });
+}
 
 /// 사이드바만 숨긴다 — 프로젝트·watcher는 유지되어 트리는 계속 갱신된다.
 function hideSidebar(): void {
@@ -1110,10 +1254,11 @@ function showSidebar(): void {
 }
 
 /// silent: 시작 시 복원/드롭 판별 경로 — 실패해도 toast 없이 조용히 넘어간다.
+/// lazy: 루트 한 단계만 스캔하고, 하위는 펼칠 때 scan_dir로 가져온다.
 async function openProject(root: string, silent = false): Promise<void> {
-  let res: ScanResult;
+  let res: ScanDirResult;
   try {
-    res = await invoke<ScanResult>('scan_tree', { root });
+    res = await scanDir(root);
   } catch (e) {
     if (silent) {
       // 복원 대상 폴더가 사라진 경우: 기억을 지운다.
@@ -1126,13 +1271,16 @@ async function openProject(root: string, silent = false): Promise<void> {
     return;
   }
   if (projectRoot !== root) {
-    // 새 프로젝트: 펼침 상태 초기화, 루트 직속만 펼침(자식 dir는 접힘).
+    // 새 프로젝트: 펼침 상태·로드 캐시 초기화.
     expandedPaths.clear();
+    loadedChildren.clear();
   }
   projectRoot = root;
-  projectTree = res.tree;
+  treeRefreshSeq++; // 이전 프로젝트 대상 in-flight 갱신 무효화
+  closeSearchPanel(); // 이전 범위로 열려 있던 검색 패널 정리 (트리 복귀)
+  loadedChildren.set(root, res.children);
   if (res.truncated) toast('항목이 많아 트리를 일부만 표시합니다');
-  sidebarTitle.textContent = res.tree.name;
+  sidebarTitle.textContent = root.split(/[/\\]/).pop() || root;
   sidebarTitle.title = root;
   showSidebar();
   renderTree();
@@ -1147,8 +1295,10 @@ async function openProject(root: string, silent = false): Promise<void> {
 function closeProject(): void {
   if (projectRoot) void invoke('unwatch_dir', { root: projectRoot });
   projectRoot = null;
-  projectTree = null;
+  treeRefreshSeq++; // in-flight 갱신 무효화
+  closeSearchPanel();
   expandedPaths.clear();
+  loadedChildren.clear();
   treeEl.textContent = '';
   sidebar.hidden = true;
   document.body.classList.remove('project-open');
@@ -1156,32 +1306,220 @@ function closeProject(): void {
   localStorage.removeItem(SIDEBAR_HIDDEN_KEY);
 }
 
-/// tree-changed 수신 시 재스캔. 펼침 상태(expandedPaths)는 그대로 유지.
+/// tree-changed 수신 시 재스캔: 루트 + 펼쳐진 dir들만 병렬로 다시 읽는다.
+/// 펼침 상태(expandedPaths)는 유지, 사라진 dir는 펼침에서 제거.
 async function refreshTree(): Promise<void> {
-  if (!projectRoot) return;
+  const root = projectRoot;
+  if (!root) return;
+  const seq = ++treeRefreshSeq;
+  let rootRes: ScanDirResult;
   try {
-    const res = await invoke<ScanResult>('scan_tree', { root: projectRoot });
-    if (!projectRoot) return; // closed while scanning
-    projectTree = res.tree;
-    renderTree();
+    rootRes = await scanDir(root);
   } catch {
+    if (seq !== treeRefreshSeq || projectRoot !== root) return;
     // 프로젝트 폴더 자체가 사라짐
     closeProject();
+    return;
   }
+  if (seq !== treeRefreshSeq || projectRoot !== root) return; // 갱신 겹침/교체
+  // 보이는 펼침만 재스캔 — 접힌 조상 아래 펼침(딥 펼치기 잔존물 포함)은
+  // 캐시를 유지한 채 미룬다.
+  const dirs = [...expandedPaths].filter((d) => isVisiblyExpanded(root, d));
+  const results = await Promise.all(
+    dirs.map((d) => scanDir(d).catch(() => null)),
+  );
+  if (seq !== treeRefreshSeq || projectRoot !== root) return;
+  const fresh = new Map<string, TreeNode[]>();
+  fresh.set(root, rootRes.children);
+  dirs.forEach((d, i) => {
+    const r = results[i];
+    if (r) fresh.set(d, r.children);
+    else expandedPaths.delete(d); // dir가 사라짐
+  });
+  // 스캔 도중 toggleDir가 새로 펼쳐 로드한 dir는 스냅샷에 없다 — 지우면
+  // "펼쳐졌는데 영영 빈" 상태가 되므로 그대로 살린다.
+  for (const [k, v] of loadedChildren) {
+    if (!fresh.has(k) && expandedPaths.has(k)) fresh.set(k, v);
+  }
+  loadedChildren.clear();
+  for (const [k, v] of fresh) loadedChildren.set(k, v);
+  renderTree();
+}
+
+/// `p`가 `base` 디렉토리의 (엄격한) 하위 경로인지. base의 뒤 구분자를 벗겨
+/// 드라이브 루트(C:\)나 파일시스템 루트(/)도 맞고, 구분자 문자를 추측하지
+/// 않아 POSIX에서 이름에 \가 든 폴더도 오판하지 않는다.
+function isUnderDir(base: string, p: string): boolean {
+  const b = base.replace(/[/\\]+$/, '');
+  return p.startsWith(b) && /[/\\]/.test(p.charAt(b.length));
+}
+
+/// d의 펼침이 화면에 실제로 보이는지: base(항상 표시)에 닿기까지의 모든 조상이
+/// 펼쳐져 있어야 한다. 접힌 조상 아래는 렌더되지 않으니 재스캔도 미뤄서,
+/// "하위 전체 펼치기" 후 접어둔 대형 서브트리가 tree-changed마다 전부
+/// 재스캔되는 폭주를 막는다. (보이지 않는 펼침의 캐시는 유지 — 다시 보이면
+/// 다음 tree-changed 때 재스캔으로 수렴한다.)
+function isVisiblyExpanded(base: string, d: string): boolean {
+  const baseN = base.replace(/[/\\]+$/, '');
+  let cur = d;
+  for (;;) {
+    const next = cur
+      .replace(/[/\\]+$/, '')
+      .replace(/[^/\\]*$/, '')
+      .replace(/[/\\]+$/, '');
+    // base 도달(혹은 경계 밖/최상위 — 보수적으로 보임 취급)
+    if (next === baseN || next === '' || next === cur) return true;
+    if (!expandedPaths.has(next)) return false;
+    cur = next;
+  }
+}
+
+/// 컨텍스트 메뉴 "다시 읽기": 해당 dir + 그 아래 펼쳐진 dir만 재스캔.
+/// 접힌 하위 dir 캐시는 버려서 다음 펼침 때 새로 읽게 한다.
+async function refreshDir(path: string): Promise<void> {
+  if (!projectRoot) return;
+  if (path === projectRoot) {
+    await refreshTree();
+    return;
+  }
+  const seq = ++treeRefreshSeq;
+  let res: ScanDirResult;
+  try {
+    res = await scanDir(path);
+  } catch {
+    if (seq !== treeRefreshSeq || !projectRoot) return;
+    // dir 자체가 사라짐 — 부모까지 정리되도록 전체 갱신.
+    await refreshTree();
+    return;
+  }
+  if (seq !== treeRefreshSeq || !projectRoot) return;
+  loadedChildren.set(path, res.children);
+  const under = (p: string) => isUnderDir(path, p);
+  for (const key of [...loadedChildren.keys()]) {
+    if (under(key)) loadedChildren.delete(key);
+  }
+  // 보이는 펼침만 재스캔 (접힌 하위 캐시는 위에서 이미 버렸다).
+  const subs = [...expandedPaths].filter((d) => under(d) && isVisiblyExpanded(path, d));
+  const results = await Promise.all(subs.map((d) => scanDir(d).catch(() => null)));
+  if (seq !== treeRefreshSeq || !projectRoot) return;
+  subs.forEach((d, i) => {
+    const r = results[i];
+    if (r) loadedChildren.set(d, r.children);
+    else expandedPaths.delete(d);
+  });
+  // 캐시가 사라졌는데 펼침으로 남은 dir(안 보여서 재스캔을 미룬 것들)는
+  // "펼쳤는데 영영 빈" 행이 되지 않게 접어 둔다.
+  for (const d of [...expandedPaths]) {
+    if (under(d) && !loadedChildren.has(d)) expandedPaths.delete(d);
+  }
+  renderTree();
+}
+
+/// 컨텍스트 메뉴 "하위 전체 펼치기": lazy가 아니라 eager로 하위 전체를 한 번에
+/// 재귀 스캔(scan_dir_deep)해 트리를 미리 완성한다. md 없는 폴더는 Rust가
+/// prune해서 보낸다(미스캔 경계는 남김). 렌더 폭주를 막기 위해 펼침은 행
+/// 예산까지만 — 나머지는 캐시만 채워 이후 수동 펼침이 즉시 되게 한다.
+const EXPAND_ROW_MAX = 10_000;
+
+async function expandDirDeep(path: string, retried = false): Promise<void> {
+  if (!projectRoot) return;
+  const seq = ++treeRefreshSeq;
+  let res: DeepScanResult;
+  try {
+    res = await invoke<DeepScanResult>('scan_dir_deep', { dir: path });
+  } catch {
+    if (seq !== treeRefreshSeq || !projectRoot) return;
+    // dir 자체가 사라짐 — 부모까지 정리되도록 전체 갱신.
+    await refreshTree();
+    return;
+  }
+  if (seq !== treeRefreshSeq || !projectRoot) {
+    // 긴 스캔 동안 watcher 갱신과 겹쳐 무효화됨 — 사용자 명령이 소리 없이
+    // 사라지지 않게 한 번만 재시도.
+    if (!retried && projectRoot) void expandDirDeep(path, true);
+    return;
+  }
+  // 기존 하위 캐시는 이번 스냅샷으로 통째로 교체 (사라진 dir 캐시 정리 겸).
+  for (const key of [...loadedChildren.keys()]) {
+    if (isUnderDir(path, key)) loadedChildren.delete(key);
+  }
+  // 클릭한 폴더는 무조건 펼친다 — md가 없어도 "md 파일 없음"으로 응답이 보이게.
+  if (path !== projectRoot) expandedPaths.add(path);
+  let rows = 0;
+  let expandSkipped = false;
+  for (const d of res.dirs) {
+    loadedChildren.set(d.path, d.children);
+    if (d.path === path || d.path === projectRoot) {
+      rows += d.children.length;
+      continue;
+    }
+    // BFS(얕은 곳 우선) 순서로 행 예산까지만 펼친다.
+    if (rows + d.children.length > EXPAND_ROW_MAX) {
+      expandSkipped = true;
+      continue;
+    }
+    rows += d.children.length;
+    if (d.children.length > 0) expandedPaths.add(d.path);
+  }
+  // 캐시 없는 펼침 상태는 "펼쳤는데 영영 빈" 행이 되므로 접어 둔다
+  // (잘린 스캔 경계 밖이거나 prune으로 사라진, 이전에 펼쳐뒀던 dir).
+  for (const d of [...expandedPaths]) {
+    if (isUnderDir(path, d) && !loadedChildren.has(d)) expandedPaths.delete(d);
+  }
+  if (res.truncated) toast('항목이 많아 하위 일부만 읽었습니다');
+  else if (expandSkipped) toast('항목이 많아 일부만 펼쳤습니다');
+  renderTree();
+}
+
+function openDirMenu(e: MouseEvent, path: string): void {
+  openCtxMenu(e, [
+    { label: '이 폴더에서 검색', action: () => openSearchPanel(path) },
+    'sep',
+    { label: '하위 전체 펼치기', action: () => void expandDirDeep(path) },
+    { label: '다시 읽기', action: () => void refreshDir(path) },
+  ]);
 }
 
 function renderTree(): void {
   treeEl.textContent = '';
-  if (!projectTree) return;
-  if (projectTree.children.length === 0) {
+  if (!projectRoot) return;
+  const rootChildren = loadedChildren.get(projectRoot);
+  if (!rootChildren || rootChildren.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'tree-empty';
     empty.textContent = 'md 파일 없음';
     treeEl.appendChild(empty);
     return;
   }
-  treeEl.appendChild(buildTreeChildren(projectTree.children));
+  treeEl.appendChild(buildTreeChildren(rootChildren));
   updateTreeHighlight();
+}
+
+/// dir 펼침 토글. 접힘→펼침에서 자식이 아직 없으면 scan_dir로 lazy 로드.
+async function toggleDir(path: string): Promise<void> {
+  if (expandedPaths.has(path)) {
+    expandedPaths.delete(path);
+    renderTree();
+    return;
+  }
+  expandedPaths.add(path);
+  renderTree(); // 즉시 chevron 회전 (자식은 로드 후 표시)
+  if (!loadedChildren.has(path)) {
+    let res: ScanDirResult;
+    try {
+      res = await scanDir(path);
+    } catch {
+      // dir가 사라졌거나 읽기 실패 — 펼침 취소.
+      expandedPaths.delete(path);
+      renderTree();
+      return;
+    }
+    // 로드 중 프로젝트가 닫혔거나 다시 접힌 경우는 버린다.
+    if (!projectRoot || !expandedPaths.has(path)) return;
+    loadedChildren.set(path, res.children);
+    if (res.truncated) toast('항목이 많아 트리를 일부만 표시합니다');
+  }
+  renderTree();
 }
 
 function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
@@ -1211,15 +1549,29 @@ function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
       icon.innerHTML = SVG_FOLDER;
       if (expanded) row.classList.add('expanded');
       row.addEventListener('click', () => {
-        if (expandedPaths.has(n.path)) {
-          expandedPaths.delete(n.path);
-        } else {
-          expandedPaths.add(n.path);
-        }
-        renderTree();
+        void toggleDir(n.path);
+      });
+      // stopPropagation: window의 contextmenu 정리 리스너가 메뉴를 도로 닫는 것 방지.
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openDirMenu(e, n.path);
       });
       if (expanded) {
-        wrap.appendChild(buildTreeChildren(n.children));
+        const kids = loadedChildren.get(n.path);
+        if (kids && kids.length > 0) {
+          wrap.appendChild(buildTreeChildren(kids));
+        } else if (kids) {
+          // lazy 스캔은 pruning이 없어 md 없는 폴더도 열린다 — 빈 표시.
+          const emptyWrap = document.createElement('div');
+          emptyWrap.className = 'tree-children';
+          const empty = document.createElement('div');
+          empty.className = 'tree-empty';
+          empty.textContent = 'md 파일 없음';
+          emptyWrap.appendChild(empty);
+          wrap.appendChild(emptyWrap);
+        }
+        // kids 미로드(로딩 중)면 chevron만 회전한 상태로 대기.
       }
     } else {
       icon.innerHTML = SVG_FILE;
@@ -1264,6 +1616,220 @@ sidebarOpenFolder.addEventListener('click', async () => {
   const sel = await open({ directory: true });
   if (typeof sel === 'string') {
     await openProject(sel);
+  }
+});
+
+// 사이드바 타이틀(프로젝트 루트) 우클릭 → 루트 범위 검색/다시 읽기.
+sidebarTitle.addEventListener('contextmenu', (e) => {
+  if (!projectRoot) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openDirMenu(e, projectRoot);
+});
+
+// ── 폴더 하위 전체 검색 패널 ──────────────────────────────────────────────────
+// 트리 dir 우클릭 "이 폴더에서 검색" → #tree 자리를 패널이 대신한다.
+// 검색은 Rust search_dir(재귀, 대소문자 무시)로 하고, 결과 클릭 시 탭을 열며
+// 문서 내 찾기(⌘F 위젯)를 같은 질의어로 열어 하이라이트한다.
+const searchPanel = document.querySelector<HTMLElement>('#search-panel')!;
+const spScopeEl = document.querySelector<HTMLElement>('#sp-scope')!;
+const stabTree = document.querySelector<HTMLButtonElement>('#stab-tree')!;
+const stabSearch = document.querySelector<HTMLButtonElement>('#stab-search')!;
+const spInput = document.querySelector<HTMLInputElement>('#sp-input')!;
+const spStatus = document.querySelector<HTMLElement>('#sp-status')!;
+const spResults = document.querySelector<HTMLElement>('#sp-results')!;
+
+let spScope: string | null = null;
+let spSeq = 0; // 응답 역전 가드: 마지막 질의의 응답만 반영
+let spTimer: number | undefined;
+
+function updateSidebarTabs(searchActive: boolean): void {
+  stabTree.classList.toggle('active', !searchActive);
+  stabSearch.classList.toggle('active', searchActive);
+  stabTree.setAttribute('aria-selected', String(!searchActive));
+  stabSearch.setAttribute('aria-selected', String(searchActive));
+}
+
+function openSearchPanel(scope: string): void {
+  spScope = scope;
+  spSeq++; // 같은 scope 재열기 시 in-flight 응답이 빈 입력 위에 그려지는 것 방지
+  clearTimeout(spTimer);
+  spScopeEl.textContent = scope.split(/[/\\]/).pop() || scope;
+  spScopeEl.title = scope;
+  spInput.value = '';
+  spStatus.textContent = '';
+  showSpHint('2자 이상 입력하세요');
+  treeEl.hidden = true;
+  searchPanel.hidden = false;
+  updateSidebarTabs(true);
+  spInput.focus();
+}
+
+/// 검색 상태(범위·질의·결과)까지 완전히 버린다 — 프로젝트 전환/닫기 전용.
+/// 단순 탭 전환은 showTreeTab()로: 상태를 유지한 채 표시만 바꾼다.
+function closeSearchPanel(): void {
+  if (spScope === null) {
+    showTreeTab();
+    return;
+  }
+  spScope = null;
+  spSeq++; // 진행 중인 응답 무효화
+  clearTimeout(spTimer);
+  showTreeTab();
+}
+
+function showTreeTab(): void {
+  searchPanel.hidden = true;
+  treeEl.hidden = false;
+  updateSidebarTabs(false);
+  updateTreeHighlight();
+}
+
+function showSearchTab(): void {
+  if (!projectRoot) return;
+  if (spScope === null) {
+    // 첫 열기: 기본 범위는 프로젝트 루트.
+    openSearchPanel(projectRoot);
+    return;
+  }
+  treeEl.hidden = true;
+  searchPanel.hidden = false;
+  updateSidebarTabs(true);
+  spInput.focus();
+}
+
+stabTree.addEventListener('click', showTreeTab);
+stabSearch.addEventListener('click', showSearchTab);
+
+function showSpHint(msg: string): void {
+  spResults.textContent = '';
+  const hint = document.createElement('div');
+  hint.className = 'sp-empty';
+  hint.textContent = msg;
+  spResults.appendChild(hint);
+}
+
+/** 텍스트에서 질의어를 <mark>로 감싼 fragment 생성 (텍스트 노드 기반 — 주입 안전). */
+function buildHighlighted(text: string, query: string): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const lower = text.toLowerCase();
+  const needle = query.toLowerCase();
+  let from = 0;
+  let at = lower.indexOf(needle);
+  while (at !== -1) {
+    if (at > from) frag.appendChild(document.createTextNode(text.slice(from, at)));
+    const mark = document.createElement('mark');
+    mark.textContent = text.slice(at, at + needle.length);
+    frag.appendChild(mark);
+    from = at + needle.length;
+    at = lower.indexOf(needle, from);
+  }
+  if (from < text.length) frag.appendChild(document.createTextNode(text.slice(from)));
+  return frag;
+}
+
+/** 결과 클릭: 파일 열고 문서 내 찾기를 같은 질의어로 연다. */
+async function openSearchHit(path: string, query: string): Promise<void> {
+  try {
+    await openTabFromPath(path);
+  } catch (err) {
+    console.error('openSearchHit failed:', path, err);
+    toast(`파일 열기 실패: ${err}`);
+    return;
+  }
+  searchInput.value = query;
+  openSearchBar();
+}
+
+function renderSearchResults(res: SearchResult, query: string, scope: string): void {
+  spResults.textContent = '';
+  if (res.files.length === 0) {
+    spStatus.textContent = '';
+    showSpHint('결과 없음');
+    return;
+  }
+  const totalHits = res.files.reduce((n, f) => n + f.matches.length, 0);
+  spStatus.textContent =
+    `파일 ${res.files.length}개 · 매치 ${totalHits}개` +
+    (res.truncated ? ' — 일부만 표시' : '');
+  const scopeBase = scope.replace(/[/\\]+$/, '');
+  for (const f of res.files) {
+    const fileEl = document.createElement('div');
+    fileEl.className = 'sp-file';
+
+    const head = document.createElement('button');
+    head.className = 'sp-file-head';
+    head.title = f.path;
+    const name = document.createElement('span');
+    name.className = 'sp-file-name';
+    if (f.name_match) name.appendChild(buildHighlighted(f.name, query));
+    else name.textContent = f.name;
+    const dir = document.createElement('span');
+    dir.className = 'sp-file-dir';
+    // scope 아래 상대 디렉토리 (파일명 제외). scope 직속이면 빈 문자열.
+    // 구분자 추측 없이 원 경로의 구분자를 보존한다 (드라이브 루트 C:\, / 포함).
+    const rel = isUnderDir(scopeBase, f.path) ? f.path.slice(scopeBase.length + 1) : f.path;
+    dir.textContent = rel.replace(/[^/\\]+$/, '').replace(/[/\\]+$/, '');
+    head.appendChild(name);
+    head.appendChild(dir);
+    head.addEventListener('click', () => void openSearchHit(f.path, query));
+    fileEl.appendChild(head);
+
+    for (const m of f.matches) {
+      const hit = document.createElement('button');
+      hit.className = 'sp-hit';
+      const line = document.createElement('span');
+      line.className = 'sp-line';
+      line.textContent = String(m.line);
+      const text = document.createElement('span');
+      text.className = 'sp-text';
+      text.appendChild(buildHighlighted(m.text, query));
+      hit.appendChild(line);
+      hit.appendChild(text);
+      hit.addEventListener('click', () => void openSearchHit(f.path, query));
+      fileEl.appendChild(hit);
+    }
+    spResults.appendChild(fileEl);
+  }
+}
+
+async function runPanelSearch(): Promise<void> {
+  const scope = spScope;
+  if (!scope) return;
+  const q = spInput.value.trim();
+  if (q.length < 2) {
+    spStatus.textContent = '';
+    showSpHint('2자 이상 입력하세요');
+    return;
+  }
+  const seq = ++spSeq;
+  spStatus.textContent = '검색 중…';
+  let res: SearchResult;
+  try {
+    res = await invoke<SearchResult>('search_dir', { root: scope, query: q });
+  } catch (e) {
+    if (seq !== spSeq || spScope !== scope) return;
+    spStatus.textContent = '';
+    showSpHint(`검색 실패: ${String(e)}`);
+    return;
+  }
+  if (seq !== spSeq || spScope !== scope) return; // 늦게 온 옛 응답은 버린다
+  renderSearchResults(res, q, scope);
+}
+
+spInput.addEventListener('input', () => {
+  clearTimeout(spTimer);
+  spTimer = window.setTimeout(() => void runPanelSearch(), 250);
+});
+spInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    e.stopPropagation(); // 전역 Esc 핸들러(문서 내 찾기 닫기)와 충돌 방지
+    showTreeTab(); // 검색 상태는 유지 — 검색 탭으로 돌아오면 그대로
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    clearTimeout(spTimer);
+    void runPanelSearch();
   }
 });
 
@@ -1373,7 +1939,7 @@ async function startTauri(): Promise<void> {
         if (/\.(md|markdown)$/i.test(p)) {
           void openTabFromPath(p);
         } else {
-          // md가 아니면 폴더로 시도 — scan_tree가 디렉토리 판별.
+          // md가 아니면 폴더로 시도 — scan_dir가 디렉토리 판별.
           // 파일 등 실패 케이스는 조용히 무시(silent).
           void openProject(p, true);
         }
