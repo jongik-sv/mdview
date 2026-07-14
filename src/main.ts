@@ -934,7 +934,7 @@ function renderTabBar(): void {
   // Keep the active tab visible when the strip overflows (open/switch scrolls to it).
   activeEl?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
   updateCopyPathBtn();
-  updateTreeHighlight();
+  updateTreeHighlight(true); // 탭 전환은 트리도 활성 파일 위치로 따라간다
 }
 
 async function renderActive(): Promise<void> {
@@ -1256,7 +1256,7 @@ function showSidebar(): void {
   sidebar.hidden = false;
   document.body.classList.add('project-open');
   localStorage.removeItem(SIDEBAR_HIDDEN_KEY);
-  updateTreeHighlight();
+  updateTreeHighlight(true); // 다시 연 사이드바는 활성 파일이 보이게
 }
 
 /// silent: 시작 시 복원/드롭 판별 경로 — 실패해도 toast 없이 조용히 넘어간다.
@@ -1487,6 +1487,9 @@ function openDirMenu(e: MouseEvent, path: string): void {
 }
 
 function renderTree(): void {
+  // 전체 재구축이라 내용이 비는 순간 scrollTop이 0으로 클램프된다 —
+  // 보던 위치를 저장했다가 복원 (폴더 토글 때 시점이 튀지 않게).
+  const scrollTop = treeEl.scrollTop;
   treeEl.textContent = '';
   if (!projectRoot) return;
   const rootChildren = loadedChildren.get(projectRoot);
@@ -1498,7 +1501,8 @@ function renderTree(): void {
     return;
   }
   treeEl.appendChild(buildTreeChildren(rootChildren));
-  updateTreeHighlight();
+  updateTreeHighlight(); // 스크롤 없이 하이라이트만
+  treeEl.scrollTop = scrollTop;
 }
 
 /// dir 펼침 토글. 접힘→펼침에서 자식이 아직 없으면 scan_dir로 lazy 로드.
@@ -1590,7 +1594,10 @@ function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
 }
 
 /// 활성 탭 파일을 트리에서 하이라이트. renderTabBar()가 탭 변화마다 호출.
-function updateTreeHighlight(): void {
+/// scroll: 활성 행으로 스크롤할지 — 탭 전환/사이드바 재표시처럼 "활성 파일을
+/// 보여줘야 하는" 경우만 true. 폴더 토글 등 일반 재렌더에서 true면 사용자가
+/// 보던 위치가 활성 파일로 끌려가 시점이 왔다갔다한다.
+function updateTreeHighlight(scroll = false): void {
   if (sidebar.hidden) return;
   for (const el of treeEl.querySelectorAll<HTMLElement>('.tree-row.active')) {
     el.classList.remove('active');
@@ -1601,7 +1608,7 @@ function updateTreeHighlight(): void {
   );
   if (row) {
     row.classList.add('active');
-    row.scrollIntoView({ block: 'nearest' });
+    if (scroll) row.scrollIntoView({ block: 'nearest' });
   }
 }
 
