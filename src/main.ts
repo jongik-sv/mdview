@@ -475,12 +475,17 @@ function decorateForPdf(title: string): void {
   const docW = document.documentElement.scrollWidth;
   const pageH = docW * (842 / 595);
   const band = Math.round(pageH * 0.045);
+  const usableH = pageH - band * 2;
+
+  // 페이지보다 큰 mermaid를 사용 영역 높이로 축소(styles.css의
+  // body.pdf-exporting .mermaid-block svg가 소비). 아래 rect 측정들이 축소된
+  // 레이아웃을 보도록 가장 먼저 설정한다.
+  document.documentElement.style.setProperty('--pdf-usable-h', `${Math.floor(usableH)}px`);
 
   // Page 1's content must start below its header band.
   content.style.paddingTop = `${band}px`;
 
   // Push blocks out of footer/header bands (recurse into too-tall blocks).
-  const usableH = pageH - band * 2;
   const pushBlocks = (parent: HTMLElement): void => {
     for (
       let el = parent.firstElementChild as HTMLElement | null;
@@ -494,40 +499,72 @@ function decorateForPdf(title: string): void {
       const bottom = r.bottom + window.scrollY;
       const page = Math.floor(top / pageH);
       if (bottom <= (page + 1) * pageH - band) continue; // fits in usable area
-      if (r.height <= usableH) {
+      // 리프(자식 element 없는 pre/code·img)와 mermaid는 재귀로 쪼갤 수 없다
+      // — SVG 내부의 HTML 스페이서는 레이아웃 무효, 리프는 재귀할 자식이
+      // 없다. 페이지보다 커도 통째로 다음 페이지 머리에 정렬해 절단이 밴드
+      // 경계에 오게 한다.
+      const atomic =
+        el.firstElementChild === null ||
+        el.classList.contains('mermaid-block') ||
+        el.tagName === 'PRE';
+      // 페이지보다 큰 atomic이 이미 페이지 머리에 있으면 밀어도 이득이 없다
+      // (빈 페이지만 한 장 생김) — 그대로 두고 내부 절단을 감수한다.
+      const atPageHead = top - (page * pageH + band) <= 1;
+      if (r.height <= usableH || (atomic && !atPageHead)) {
         const sp = document.createElement('div');
         sp.className = 'pdf-decoration';
         sp.style.height = `${(page + 1) * pageH + band - top}px`;
         el.parentElement!.insertBefore(sp, el);
-      } else {
+      } else if (!atomic) {
         pushBlocks(el); // taller than a page: try its children
       }
     }
   };
   pushBlocks(content);
 
+  // 스페이서로 못 민 초대형 블록(사용영역보다 큰 pre/img 등)은 여전히 페이지
+  // 경계에 걸쳐 있다. 그 구간에 밴드를 그리면 배경이 본문 줄을 통째로 덮어
+  // 내용이 사라지므로(겹침보다 나쁨), 걸친 구간의 밴드는 생략한다.
+  // EPS: 서브픽셀 rect·스페이서 반올림 오차로 경계에 정확히 맞닿은 블록이
+  // 걸침으로 오판되면 멀쩡한 밴드까지 사라진다 — 몇 px 는 맞닿음으로 취급.
+  const EPS = 3;
+  const straddling: Array<[number, number]> = [];
+  content.querySelectorAll<HTMLElement>('pre, img, table, .mermaid-block').forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.height <= usableH + EPS) return;
+    straddling.push([r.top + window.scrollY, r.bottom + window.scrollY]);
+  });
+  const bandClear = (top: number): boolean =>
+    straddling.every(([s, e]) => top + band <= s + EPS || top >= e - EPS);
+
   // Header (title) + footer (page number) bands, absolutely positioned in
   // document coordinates — they land exactly inside each sliced page.
   const docH = document.documentElement.scrollHeight;
   const pages = Math.max(1, Math.ceil(docH / pageH));
   for (let k = 0; k < pages; k++) {
-    const header = document.createElement('div');
-    header.className = 'pdf-decoration pdf-page-band';
-    header.style.top = `${k * pageH}px`;
-    header.style.height = `${band}px`;
-    header.textContent = title;
-    const footer = document.createElement('div');
-    footer.className = 'pdf-decoration pdf-page-band';
-    footer.style.top = `${(k + 1) * pageH - band}px`;
-    footer.style.height = `${band}px`;
-    footer.textContent = `${k + 1} / ${pages}`;
-    document.body.append(header, footer);
+    if (bandClear(k * pageH)) {
+      const header = document.createElement('div');
+      header.className = 'pdf-decoration pdf-page-band';
+      header.style.top = `${k * pageH}px`;
+      header.style.height = `${band}px`;
+      header.textContent = title;
+      document.body.append(header);
+    }
+    if (bandClear((k + 1) * pageH - band)) {
+      const footer = document.createElement('div');
+      footer.className = 'pdf-decoration pdf-page-band';
+      footer.style.top = `${(k + 1) * pageH - band}px`;
+      footer.style.height = `${band}px`;
+      footer.textContent = `${k + 1} / ${pages}`;
+      document.body.append(footer);
+    }
   }
 }
 
 function removePdfDecorations(): void {
   document.querySelectorAll('.pdf-decoration').forEach((el) => el.remove());
   content.style.paddingTop = '';
+  document.documentElement.style.removeProperty('--pdf-usable-h');
 }
 
 /**
