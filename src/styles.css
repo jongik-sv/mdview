@@ -1104,3 +1104,12 @@ body.pdf-exporting .mermaid-block svg {
     max-width: 100% !important;
   }
 }
+
+/* ── 수식(KaTeX) ─────────────────────────────────────────────────────────
+   글리프 색은 currentColor 상속 → 라이트/다크 테마 본문색 그대로 따라간다.
+   넓은 디스플레이 수식은 본문 대신 자기 컨테이너 안에서만 가로 스크롤. */
+#content .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}

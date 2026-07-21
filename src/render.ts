@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import taskLists from 'markdown-it-task-lists';
+import katex from '@vscode/markdown-it-katex';
 
 /**
  * GitHub-ish heading slug: lowercase, drop punctuation (keep unicode letters,
@@ -29,6 +30,9 @@ export function renderMarkdown(src: string): { html: string; blocks: string[] } 
     breaks: false,
   });
   md.use(taskLists, { enabled: true });
+  // 수식: $$...$$ 블록 + 인라인 $...$ (닫는 $가 있을 때만 매칭). throwOnError:false →
+  // 잘못된 LaTeX는 전체 렌더를 깨뜨리지 않고 해당 수식만 빨간 에러 텍스트로 표시.
+  md.use(katex, { throwOnError: false });
 
   // Assign unique slug ids to headings so `#anchor` links resolve.
   md.core.ruler.push('heading_ids', (state) => {

@@ -1,7 +1,7 @@
 {
   "name": "mdview",
   "private": true,
-  "version": "0.1.10",
+  "version": "0.1.11",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,8 +15,10 @@
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@vscode/markdown-it-katex": "^1.1.2",
     "github-markdown-css": "^5.9.0",
     "highlight.js": "^11.11.1",
+    "katex": "^0.18.1",
     "markdown-it": "^14.2.0",
     "markdown-it-task-lists": "^2.1.1",
     "mermaid": "^11.15.0",

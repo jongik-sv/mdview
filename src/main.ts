@@ -5,6 +5,7 @@ import { openUrl, openPath } from '@tauri-apps/plugin-opener';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import mermaid from 'mermaid';
+import 'katex/dist/katex.min.css';
 import sample from './fixtures/sample.md?raw';
 import { renderMarkdown } from './render';
 import {
@@ -506,6 +507,10 @@ function decorateForPdf(title: string): void {
       const atomic =
         el.firstElementChild === null ||
         el.classList.contains('mermaid-block') ||
+        // KaTeX 수식은 내부 span 구조가 정밀 배치 — 스페이서를 끼우면 깨진다.
+        // 통째로 다음 페이지로 밀어 절단이 밴드 경계에 오게 한다.
+        el.classList.contains('katex-display') ||
+        el.classList.contains('katex') ||
         el.tagName === 'PRE';
       // 페이지보다 큰 atomic이 이미 페이지 머리에 있으면 밀어도 이득이 없다
       // (빈 페이지만 한 장 생김) — 그대로 두고 내부 절단을 감수한다.
