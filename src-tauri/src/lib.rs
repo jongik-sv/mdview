@@ -1387,6 +1387,7 @@ mod tests {
         fs::write(t.path().join(".git").join("y.md"), "needle").unwrap();
         fs::write(t.path().join(".hidden.md"), "needle").unwrap();
         fs::write(t.path().join("plain.txt"), "needle").unwrap();
+        fs::write(t.path().join("diagram.bpmn"), "needle").unwrap();
         fs::write(t.path().join("real.md"), "a needle here").unwrap();
         let res = search(t.path(), "needle");
         let names: Vec<_> = res.files.iter().map(|f| f.name.as_str()).collect();

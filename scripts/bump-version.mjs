@@ -61,6 +61,9 @@ writeFileSync(cargoPath, cargo);
 
 console.log('Updated: package.json, src-tauri/tauri.conf.json, src-tauri/Cargo.toml');
 
+console.log('Regenerating Cargo.lock...');
+execSync('cargo check --quiet', { stdio: 'inherit', cwd: join(root, 'src-tauri') });
+
 if (doTag) {
   const tag = `v${next}`;
   execSync(`git add ${pkgPath} ${confPath} ${cargoPath} ${join(root, 'src-tauri', 'Cargo.lock')}`, { stdio: 'inherit' });
