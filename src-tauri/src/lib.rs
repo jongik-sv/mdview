@@ -130,10 +130,10 @@ fn unwatch_file(path: String, state: tauri::State<AppState>) {
     state.watchers.lock().unwrap().remove(&path);
 }
 
-/// A node in the lazy project file tree (`scan_dir`). Files are markdown-only;
-/// directories always appear (their children are fetched lazily, one level at
-/// a time, so a directory shows up before we know whether any markdown lives
-/// below it).
+/// A node in the lazy project file tree (`scan_dir`). Files are markdown or
+/// BPMN (see `is_viewable_name`); directories always appear (their children
+/// are fetched lazily, one level at a time, so a directory shows up before we
+/// know whether any viewable file lives below it).
 #[derive(Clone, Serialize)]
 struct TreeNode {
     name: String,
@@ -152,24 +152,24 @@ struct ScanDirResult {
 /// Entry cap for a single `scan_dir` level.
 const SCAN_DIR_MAX_ENTRIES: usize = 5_000;
 
-fn is_markdown_name(name: &str) -> bool {
+fn is_viewable_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".md") || lower.ends_with(".markdown")
+    lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".bpmn")
 }
 
 fn cmp_tree_name(a: &TreeNode, b: &TreeNode) -> std::cmp::Ordering {
     a.name.to_lowercase().cmp(&b.name.to_lowercase())
 }
 
-/// List ONE level of `dir` for the lazy project tree: markdown files plus all
-/// subdirectories (no recursive pruning — that would defeat lazy loading, so
-/// directories with no markdown below them do appear). Errs when `dir` is not
-/// a directory — the frontend drop handler relies on this to tell folders
-/// from stray non-markdown files. Dotfiles, `node_modules` and symlinks are
-/// skipped; symlinks are never followed. Directories sort before files, each
-/// name-sorted case-insensitively. Async + blocking thread: refreshes can
-/// fan this out over many expanded dirs at once, and a slow volume must not
-/// stall the main thread.
+/// List ONE level of `dir` for the lazy project tree: viewable files (`.md`,
+/// `.markdown`, `.bpmn`) plus all subdirectories (no recursive pruning — that
+/// would defeat lazy loading, so directories with no viewable file below them
+/// do appear). Errs when `dir` is not a directory — the frontend drop handler
+/// relies on this to tell folders from stray non-viewable files. Dotfiles,
+/// `node_modules` and symlinks are skipped; symlinks are never followed.
+/// Directories sort before files, each name-sorted case-insensitively. Async +
+/// blocking thread: refreshes can fan this out over many expanded dirs at
+/// once, and a slow volume must not stall the main thread.
 #[tauri::command]
 async fn scan_dir(dir: String) -> Result<ScanDirResult, String> {
     tauri::async_runtime::spawn_blocking(move || scan_dir_inner(dir, SCAN_DIR_MAX_ENTRIES))
@@ -206,11 +206,11 @@ fn scan_dir_inner(dir: String, max_entries: usize) -> Result<ScanDirResult, Stri
             continue;
         }
         let is_dir = ft.is_dir();
-        // Skip non-collectible entries (non-markdown files) BEFORE the cap
-        // check: only directories and markdown files count. Otherwise a
-        // trailing dotfile/`.txt` on an otherwise-complete listing would flip
-        // `truncated`.
-        if !is_dir && !is_markdown_name(&name) {
+        // Skip non-collectible entries (non-viewable files) BEFORE the cap
+        // check: only directories and viewable files (md/bpmn) count.
+        // Otherwise a trailing dotfile/`.txt` on an otherwise-complete listing
+        // would flip `truncated`.
+        if !is_dir && !is_viewable_name(&name) {
             continue;
         }
         // Enforce the cap at PUSH time: truncate only when a collectible entry
@@ -332,14 +332,16 @@ fn scan_dir_deep_inner(
     Ok(prune_deep(dirs, truncated))
 }
 
-/// Drop directories whose scanned subtree contains no markdown. Computed
-/// bottom-up over the BFS list (children come after parents, so a reverse
-/// pass sees every child's verdict first). A child dir that was never scanned
-/// (beyond the truncation frontier or vanished mid-scan) is UNKNOWN and kept —
-/// pruning must never hide a directory it didn't examine. The root (first
-/// entry) is always kept: the user asked about that folder explicitly.
+/// Drop directories whose scanned subtree contains no viewable file (md or
+/// bpmn). Computed bottom-up over the BFS list (children come after parents,
+/// so a reverse pass sees every child's verdict first). A child dir that was
+/// never scanned (beyond the truncation frontier or vanished mid-scan) is
+/// UNKNOWN and kept — pruning must never hide a directory it didn't examine.
+/// The root (first entry) is always kept: the user asked about that folder
+/// explicitly.
 fn prune_deep(dirs: Vec<DeepDir>, truncated: bool) -> DeepScanResult {
-    // path → "subtree has markdown". Files in `children` are md-only already.
+    // path → "subtree has a viewable file". Files in `children` are already
+    // viewable-only (md/bpmn).
     let mut has_md: HashMap<String, bool> = HashMap::with_capacity(dirs.len());
     for d in dirs.iter().rev() {
         let keep = d
@@ -537,7 +539,9 @@ impl Searcher {
             }
             if ft.is_dir() {
                 dirs.push((name, entry.path()));
-            } else if is_markdown_name(&name) {
+            } else if name.to_ascii_lowercase().ends_with(".md")
+                || name.to_ascii_lowercase().ends_with(".markdown")
+            {
                 files.push((name, entry.path()));
             }
         }
@@ -1099,6 +1103,17 @@ mod tests {
     }
 
     #[test]
+    fn scan_dir_includes_bpmn_alongside_markdown() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("note.md"));
+        touch(&t.path().join("diagram.bpmn"));
+        touch(&t.path().join("skip.txt"));
+        let res = scan(t.path());
+        let names: Vec<_> = res.children.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["diagram.bpmn", "note.md"]); // 이름순, .txt는 제외
+    }
+
+    #[test]
     fn scan_dir_skips_dotfiles_and_node_modules() {
         let t = tempfile::tempdir().unwrap();
         fs::create_dir(t.path().join(".git")).unwrap();
@@ -1198,6 +1213,28 @@ mod tests {
         assert_eq!(a_names, vec!["inner"]);
         let inner_names: Vec<_> = res.dirs[2].children.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(inner_names, vec!["deep.md"]);
+    }
+
+    #[test]
+    fn scan_dir_deep_keeps_bpmn_only_dir() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("root.md"));
+        fs::create_dir(t.path().join("flows")).unwrap();
+        touch(&t.path().join("flows/order.bpmn")); // md는 없지만 bpmn이 있어 더 이상 prune 안 됨
+        let res = scan_deep(t.path());
+        let paths: Vec<_> = res
+            .dirs
+            .iter()
+            .map(|d| {
+                Path::new(&d.path)
+                    .strip_prefix(t.path())
+                    .map(|r| r.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(paths, vec!["", "flows"]);
+        let flows_names: Vec<_> = res.dirs[1].children.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(flows_names, vec!["order.bpmn"]);
     }
 
     #[test]
