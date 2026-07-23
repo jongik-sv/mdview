@@ -1249,6 +1249,10 @@ const SVG_FOLDER =
   '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M1.75 3.5A1.75 1.75 0 0 1 3.5 1.75h2.1c.47 0 .92.19 1.25.52l.88.88h4.77A1.75 1.75 0 0 1 14.25 4.9v7.35a1.75 1.75 0 0 1-1.75 1.75h-9a1.75 1.75 0 0 1-1.75-1.75z" fill="currentColor"/></svg>';
 const SVG_FILE =
   '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M3.75 1.75h5.5l3 3v9a.75.75 0 0 1-.75.75h-7.75a.75.75 0 0 1-.75-.75v-11.25a.75.75 0 0 1 .75-.75z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5 11.2V8l1.6 1.9L8.2 8v3.2" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// 원(시작 이벤트)-사각형(태스크)-원(종료 이벤트) — BPMN 표기법을 참고한 파일 아이콘.
+// 폴더/파일 아이콘과 동일하게 currentColor 선화 스타일로 통일.
+const SVG_BPMN =
+  '<svg width="15" height="15" viewBox="0 0 16 16"><circle cx="2.6" cy="8" r="1.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4.1 8h2.3" fill="none" stroke="currentColor" stroke-width="1.1"/><rect x="6.6" y="5.7" width="4.3" height="4.6" rx="0.9" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M10.9 8h2.1" fill="none" stroke="currentColor" stroke-width="1.1"/><circle cx="13.5" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
 
 interface TreeNode {
   name: string;
@@ -1510,7 +1514,7 @@ async function expandDirDeep(path: string, retried = false): Promise<void> {
   for (const key of [...loadedChildren.keys()]) {
     if (isUnderDir(path, key)) loadedChildren.delete(key);
   }
-  // 클릭한 폴더는 무조건 펼친다 — md가 없어도 "md 파일 없음"으로 응답이 보이게.
+  // 클릭한 폴더는 무조건 펼친다 — 유효 파일이 없어도 "md/bpmn 파일 없음"으로 응답이 보이게.
   if (path !== projectRoot) expandedPaths.add(path);
   let rows = 0;
   let expandSkipped = false;
@@ -1557,7 +1561,7 @@ function renderTree(): void {
   if (!rootChildren || rootChildren.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'tree-empty';
-    empty.textContent = 'md 파일 없음';
+    empty.textContent = 'md/bpmn 파일 없음';
     treeEl.appendChild(empty);
     return;
   }
@@ -1638,12 +1642,20 @@ function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
           emptyWrap.className = 'tree-children';
           const empty = document.createElement('div');
           empty.className = 'tree-empty';
-          empty.textContent = 'md 파일 없음';
+          empty.textContent = 'md/bpmn 파일 없음';
           emptyWrap.appendChild(empty);
           wrap.appendChild(emptyWrap);
         }
         // kids 미로드(로딩 중)면 chevron만 회전한 상태로 대기.
       }
+    } else if (/\.bpmn$/i.test(n.path)) {
+      icon.innerHTML = SVG_BPMN;
+      row.addEventListener('click', () => {
+        openPath(n.path).catch((err) => {
+          console.error('openPath failed:', n.path, err);
+          toast(`열기 실패: ${err}`);
+        });
+      });
     } else {
       icon.innerHTML = SVG_FILE;
       row.addEventListener('click', () => {
@@ -2087,8 +2099,13 @@ async function startTauri(): Promise<void> {
       for (const p of event.payload.paths) {
         if (/\.(md|markdown)$/i.test(p)) {
           void openTabFromPath(p);
+        } else if (/\.bpmn$/i.test(p)) {
+          openPath(p).catch((err) => {
+            console.error('openPath failed:', p, err);
+            toast(`열기 실패: ${err}`);
+          });
         } else {
-          // md가 아니면 폴더로 시도 — scan_dir가 디렉토리 판별.
+          // md/bpmn이 아니면 폴더로 시도 — scan_dir가 디렉토리 판별.
           // 파일 등 실패 케이스는 조용히 무시(silent).
           void openProject(p, true);
         }
