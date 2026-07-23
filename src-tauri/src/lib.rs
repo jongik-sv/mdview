@@ -157,6 +157,13 @@ fn is_viewable_name(name: &str) -> bool {
     lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".bpmn")
 }
 
+/// `.md`/`.markdown` only — used by `search_dir`'s file walk, which (unlike
+/// the project tree) does not search inside `.bpmn` XML content.
+fn is_markdown_source_name(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".md") || lower.ends_with(".markdown")
+}
+
 fn cmp_tree_name(a: &TreeNode, b: &TreeNode) -> std::cmp::Ordering {
     a.name.to_lowercase().cmp(&b.name.to_lowercase())
 }
@@ -539,9 +546,7 @@ impl Searcher {
             }
             if ft.is_dir() {
                 dirs.push((name, entry.path()));
-            } else if name.to_ascii_lowercase().ends_with(".md")
-                || name.to_ascii_lowercase().ends_with(".markdown")
-            {
+            } else if is_markdown_source_name(&name) {
                 files.push((name, entry.path()));
             }
         }
