@@ -754,7 +754,8 @@ function renderHistory(): void {
     tab.classList.toggle('active', on);
     tab.setAttribute('aria-selected', String(on));
   }
-  historyClear.title = historyTab === 'folder' ? '폴더 기록 지우기' : '파일 기록 지우기';
+  // 항목별 ✕와 구분되게 "전체"를 밝힌다 — 다만 지우는 범위는 보고 있는 탭뿐.
+  historyClear.title = historyTab === 'folder' ? '폴더 기록 전체 지우기' : '파일 기록 전체 지우기';
   const list = loadRecents().filter((e) => e.kind === historyTab);
   if (list.length === 0) {
     const empty = document.createElement('div');
@@ -778,6 +779,19 @@ function renderHistory(): void {
     name.className = 'history-name';
     name.textContent = path.split(/[/\\]/).pop() || path;
 
+    // 제거 버튼은 item(<button>) 안이 아니라 형제로 둔다 — 버튼 중첩은 무효
+    // 마크업이라 클릭 판정이 브라우저마다 갈린다.
+    const row = document.createElement('div');
+    row.className = 'history-row';
+    const remove = document.createElement('button');
+    remove.className = 'history-remove';
+    remove.textContent = '✕';
+    remove.title = '기록에서 제거';
+    remove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      removeRecent(path); // saveRecents → renderHistory로 목록이 다시 그려진다
+    });
+
     item.appendChild(icon);
     item.appendChild(name);
     item.addEventListener('click', () => {
@@ -793,7 +807,9 @@ function renderHistory(): void {
         removeRecent(path);
       });
     });
-    historyList.appendChild(item);
+    row.appendChild(item);
+    row.appendChild(remove);
+    historyList.appendChild(row);
   }
   historyList.scrollTop = scrollTop;
 }
