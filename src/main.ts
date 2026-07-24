@@ -732,9 +732,16 @@ function removeRecent(path: string): void {
   saveRecents(loadRecents().filter((e) => e.path !== path));
 }
 
-// ── 히스토리 (사이드바 트리/검색 아래 최근 연 파일 목록) ────────────────────
+// ── 히스토리 (사이드바 트리/검색 아래 최근 연 파일/폴더 목록) ────────────────
+// 저장소는 하나(mdview-recents)이고 탭이 kind 필터 역할만 한다 — 상한·최신순은
+// 파일/폴더가 계속 공유한다.
 const historyList = document.querySelector<HTMLElement>('#history-list')!;
 const historyClear = document.querySelector<HTMLButtonElement>('#history-clear')!;
+const historyTabs = document.querySelectorAll<HTMLButtonElement>('#history-tabs .history-tab');
+
+const HISTORY_TAB_KEY = 'mdview-history-tab';
+let historyTab: RecentKind =
+  localStorage.getItem(HISTORY_TAB_KEY) === 'folder' ? 'folder' : 'file';
 
 /// 히스토리 목록 재구축. saveRecents(모든 기록 변경의 단일 경로)와
 /// renderTabBar(활성 파일 표시 갱신)가 호출한다. 항목 수는 RECENTS_MAX 이하.
@@ -742,11 +749,17 @@ function renderHistory(): void {
   // 전체 재구축이라 스크롤이 0으로 튄다 — 보던 위치 저장/복원 (renderTree와 동일).
   const scrollTop = historyList.scrollTop;
   historyList.textContent = '';
-  const list = loadRecents();
+  for (const tab of historyTabs) {
+    const on = tab.dataset.kind === historyTab;
+    tab.classList.toggle('active', on);
+    tab.setAttribute('aria-selected', String(on));
+  }
+  historyClear.title = historyTab === 'folder' ? '폴더 기록 지우기' : '파일 기록 지우기';
+  const list = loadRecents().filter((e) => e.kind === historyTab);
   if (list.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'history-empty';
-    empty.textContent = '기록 없음';
+    empty.textContent = historyTab === 'folder' ? '폴더 기록 없음' : '파일 기록 없음';
     historyList.appendChild(empty);
     return;
   }
@@ -785,7 +798,18 @@ function renderHistory(): void {
   historyList.scrollTop = scrollTop;
 }
 
-historyClear.addEventListener('click', () => saveRecents([]));
+// 보고 있는 탭의 기록만 지운다 — 안 보이는 쪽까지 날아가면 되돌릴 방법이 없다.
+historyClear.addEventListener('click', () =>
+  saveRecents(loadRecents().filter((e) => e.kind !== historyTab)),
+);
+
+for (const tab of historyTabs) {
+  tab.addEventListener('click', () => {
+    historyTab = tab.dataset.kind === 'folder' ? 'folder' : 'file';
+    localStorage.setItem(HISTORY_TAB_KEY, historyTab);
+    renderHistory();
+  });
+}
 
 // ── 히스토리 높이 리사이즈 (트리/검색과의 경계 드래그) ──────────────────────
 // 최소 2행(48px) ~ 최대 사이드바 높이의 절반. --history-h는 #history-list의

@@ -935,10 +935,35 @@ html[data-mdview-theme='dark'] #history {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 4px 6px 2px 12px;
+  padding: 4px 6px 2px 8px;
   font-size: 11.5px;
   font-weight: 600;
-  opacity: 0.75;
+}
+#history-tabs {
+  display: flex;
+  gap: 2px;
+}
+.history-tab {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.history-tab:hover {
+  opacity: 0.85;
+}
+.history-tab.active {
+  opacity: 1;
+}
+html[data-mdview-theme='light'] .history-tab.active {
+  background: #eaeef2;
+}
+html[data-mdview-theme='dark'] .history-tab.active {
+  background: #21262d;
 }
 #history-resize {
   height: 5px;
