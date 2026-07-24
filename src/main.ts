@@ -1038,14 +1038,17 @@ function renderTabBar(): void {
     // 표시가 소음이 되므로 달지 않는다.
     if (projectRoot && !isUnderDir(projectRoot, tab.path)) {
       el.classList.add('tab-external');
+      const target = bestFolderFor(tab.path);
       const badge = document.createElement('button');
       badge.className = 'tab-external-badge';
       badge.innerHTML = SVG_EXTERNAL;
-      badge.title = '프로젝트 폴더 밖의 문서 — 클릭하면 이 파일의 폴더를 엽니다';
+      // 열릴 폴더를 미리 알려준다 — 직속 폴더가 아닐 수 있어서(히스토리의 상위
+      // 프로젝트를 고른다) 이름을 안 밝히면 어디로 가는지 예측이 안 된다.
+      badge.title = `프로젝트 폴더 밖의 문서 — 클릭하면 "${target.split(/[/\\]/).pop() || target}" 폴더를 엽니다`;
       badge.addEventListener('pointerdown', (e) => e.stopPropagation()); // 탭 드래그 방지
       badge.addEventListener('click', (e) => {
         e.stopPropagation(); // 탭 활성화로 새지 않게
-        void openProject(parentDir(tab.path));
+        void openProject(target);
       });
       el.appendChild(badge);
     }
@@ -1527,6 +1530,15 @@ async function refreshTree(): Promise<void> {
 function isUnderDir(base: string, p: string): boolean {
   const b = base.replace(/[/\\]+$/, '');
   return p.startsWith(b) && /[/\\]/.test(p.charAt(b.length));
+}
+
+/// 탭의 외부 마커를 눌렀을 때 열 폴더. 파일의 직속 폴더보다, 히스토리에 남은
+/// "이전에 열었던 프로젝트" 중 그 파일을 품는 것을 우선한다 — 하위 폴더의 문서
+/// 하나를 열었다고 프로젝트 루트가 그 하위로 좁혀지면 트리가 쓸모없어진다.
+/// 후보가 여럿이면 히스토리 순서(최신순) 첫 번째 = 가장 최근에 쓰던 프로젝트.
+function bestFolderFor(path: string): string {
+  const recent = loadRecents().find((e) => e.kind === 'folder' && isUnderDir(e.path, path));
+  return recent ? recent.path : parentDir(path);
 }
 
 /// 경로의 상위 디렉토리. 구분자는 경로에서 판별한다(플랫폼 추측 금지).
