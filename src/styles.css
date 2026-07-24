@@ -165,6 +165,28 @@ html[data-mdview-theme='dark'] .tab-active {
   background: rgba(128, 128, 128, 0.2);
 }
 
+/* 프로젝트 폴더 밖 문서 표시 — 배지 클릭 = 그 파일의 폴더 열기.
+   제목 앞(닫기 버튼 반대편)에 둬서 닫기와 오폭하지 않는다. */
+.tab-external-badge {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  padding: 1px 2px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.55;
+}
+.tab-external-badge:hover {
+  opacity: 1;
+  background: rgba(128, 128, 128, 0.2);
+}
+.tab-external .tab-title {
+  font-style: italic; /* 배지를 못 본 경우에도 제목만으로 구분된다 */
+}
+
 /* Drag-to-reorder feedback */
 .tab-dragging {
   opacity: 0.4;

@@ -1,6 +1,6 @@
 name: Release
 
-# Push a tag like v0.1.0 to trigger a multi-platform build and a draft GitHub Release.
+# Push a tag like v0.1.0 to trigger a multi-platform build and a published GitHub Release.
 on:
   push:
     tags:
@@ -58,6 +58,6 @@ jobs:
           releaseBody: |
             Native builds for macOS (Apple Silicon + Intel) and Windows x64.
             Download an installer from the assets below.
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

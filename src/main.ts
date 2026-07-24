@@ -1017,6 +1017,23 @@ function renderTabBar(): void {
       openTabMenu(e, tab.path);
     });
 
+    // 프로젝트가 열려 있는데 그 밖의 파일이면 탭에 외부 표시를 단다 — 안 그러면
+    // 트리에 보이는 문서와 구분이 안 된다. 프로젝트가 없을 땐 모든 탭이 "밖"이라
+    // 표시가 소음이 되므로 달지 않는다.
+    if (projectRoot && !isUnderDir(projectRoot, tab.path)) {
+      el.classList.add('tab-external');
+      const badge = document.createElement('button');
+      badge.className = 'tab-external-badge';
+      badge.innerHTML = SVG_EXTERNAL;
+      badge.title = '프로젝트 폴더 밖의 문서 — 클릭하면 이 파일의 폴더를 엽니다';
+      badge.addEventListener('pointerdown', (e) => e.stopPropagation()); // 탭 드래그 방지
+      badge.addEventListener('click', (e) => {
+        e.stopPropagation(); // 탭 활성화로 새지 않게
+        void openProject(parentDir(tab.path));
+      });
+      el.appendChild(badge);
+    }
+
     const title = document.createElement('span');
     title.className = 'tab-title';
     title.textContent = tab.title;
@@ -1210,6 +1227,12 @@ function openTabMenu(e: MouseEvent, path: string): void {
     'sep',
     { label: '모든 탭 닫기', action: () => void closeTabs(tabs.map((t) => t.path)) },
     'sep',
+    {
+      // 이미 그 폴더가 루트면 할 일이 없다.
+      label: '이 파일의 폴더 열기',
+      enabled: projectRoot !== parentDir(path),
+      action: () => void openProject(parentDir(path)),
+    },
     { label: '경로 복사', action: () => void copyPathToClipboard(path) },
   ]);
 }
@@ -1300,6 +1323,9 @@ const SVG_FOLDER =
   '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M1.75 3.5A1.75 1.75 0 0 1 3.5 1.75h2.1c.47 0 .92.19 1.25.52l.88.88h4.77A1.75 1.75 0 0 1 14.25 4.9v7.35a1.75 1.75 0 0 1-1.75 1.75h-9a1.75 1.75 0 0 1-1.75-1.75z" fill="currentColor"/></svg>';
 const SVG_FILE =
   '<svg width="15" height="15" viewBox="0 0 16 16"><path d="M3.75 1.75h5.5l3 3v9a.75.75 0 0 1-.75.75h-7.75a.75.75 0 0 1-.75-.75v-11.25a.75.75 0 0 1 .75-.75z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5 11.2V8l1.6 1.9L8.2 8v3.2" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// 상자 밖으로 나가는 화살표 — "프로젝트 폴더 밖" 표시 (탭 배지).
+const SVG_EXTERNAL =
+  '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3H3.6A1.6 1.6 0 0 0 2 4.6v7.8A1.6 1.6 0 0 0 3.6 14h7.8a1.6 1.6 0 0 0 1.6-1.6V9"/><path d="M9.8 2.2H14v4.2"/><path d="M14 2.2 7.8 8.4"/></svg>';
 // 원(시작 이벤트)-사각형(태스크)-원(종료 이벤트) — BPMN 표기법을 참고한 파일 아이콘.
 // 폴더/파일 아이콘과 동일하게 currentColor 선화 스타일로 통일.
 const SVG_BPMN =
@@ -1411,6 +1437,7 @@ async function openProject(root: string, silent = false, record = true): Promise
   sidebarTitle.title = root;
   showSidebar();
   renderTree();
+  renderTabBar(); // 루트가 바뀌면 탭의 "폴더 밖" 배지도 다시 판정해야 한다
   localStorage.setItem(PROJECT_KEY, root);
   // pushRecent→saveRecents가 renderHistory를 부르지만, record=false 경로에선
   // 안 불리므로 폴더 active 강조를 위해 여기서도 명시적으로 갱신한다.
@@ -1435,7 +1462,7 @@ function closeProject(): void {
   document.body.classList.remove('project-open');
   localStorage.removeItem(PROJECT_KEY);
   localStorage.removeItem(SIDEBAR_HIDDEN_KEY);
-  renderHistory(); // 폴더 active 강조 해제
+  renderTabBar(); // 배지 제거 (프로젝트가 없으면 "밖"이 의미 없다) + 히스토리 갱신
 }
 
 /// tree-changed 수신 시 재스캔: 루트 + 펼쳐진 dir들만 병렬로 다시 읽는다.
@@ -1484,6 +1511,16 @@ async function refreshTree(): Promise<void> {
 function isUnderDir(base: string, p: string): boolean {
   const b = base.replace(/[/\\]+$/, '');
   return p.startsWith(b) && /[/\\]/.test(p.charAt(b.length));
+}
+
+/// 경로의 상위 디렉토리. 구분자는 경로에서 판별한다(플랫폼 추측 금지).
+/// 최상위(구분자가 하나뿐)면 루트를 그대로 돌려준다.
+function parentDir(p: string): string {
+  const sep = p.includes('\\') ? '\\' : '/';
+  const trimmed = p.replace(/[/\\]+$/, '');
+  const i = trimmed.lastIndexOf(sep);
+  if (i <= 0) return sep;
+  return trimmed.slice(0, i);
 }
 
 /// d의 펼침이 화면에 실제로 보이는지: base(항상 표시)에 닿기까지의 모든 조상이
