@@ -6,7 +6,10 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "/**" }, { "path": "**" }, { "path": "$HOME/**" }]
+    },
     "dialog:default",
     "clipboard-manager:allow-write-text"
   ]
