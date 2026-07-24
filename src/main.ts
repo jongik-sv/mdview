@@ -681,37 +681,55 @@ async function copyPathToClipboard(path: string): Promise<void> {
   }
 }
 
-// ── Recent files ──────────────────────────────────────────────────────────────
+// ── Recent files & folders ────────────────────────────────────────────────────
 // Persist the most-recently-opened paths in localStorage (most-recent first,
 // deduped, capped). Only meaningful under Tauri where paths are real files.
+// 파일과 폴더(프로젝트)가 한 목록·한 상한을 공유한다. 경로가 겹칠 수 없으므로
+// dedup/삭제는 path 단독 비교로 충분하다.
 const RECENTS_KEY = 'mdview-recents';
 const RECENTS_MAX = 10;
 
-function loadRecents(): string[] {
+type RecentKind = 'file' | 'folder';
+interface RecentEntry {
+  path: string;
+  kind: RecentKind;
+}
+
+/// 저장값은 원래 string[]이었다 — 옛 항목은 파일로 승격해서 살린다(버리지 않음).
+function loadRecents(): RecentEntry[] {
   try {
     const raw = localStorage.getItem(RECENTS_KEY);
     const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr.filter((p) => typeof p === 'string') : [];
+    if (!Array.isArray(arr)) return [];
+    const out: RecentEntry[] = [];
+    for (const e of arr) {
+      if (typeof e === 'string') {
+        out.push({ path: e, kind: 'file' });
+      } else if (e && typeof e.path === 'string') {
+        out.push({ path: e.path, kind: e.kind === 'folder' ? 'folder' : 'file' });
+      }
+    }
+    return out;
   } catch {
     return [];
   }
 }
 
-function saveRecents(list: string[]): void {
+function saveRecents(list: RecentEntry[]): void {
   localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, RECENTS_MAX)));
   renderHistory(); // 기록 변경의 단일 경로 — 목록 UI도 여기서 항상 동기화
 }
 
 /** Record `path` as the most-recent entry (dedup, cap). */
-function pushRecent(path: string): void {
-  const list = loadRecents().filter((p) => p !== path);
-  list.unshift(path);
+function pushRecent(path: string, kind: RecentKind = 'file'): void {
+  const list = loadRecents().filter((e) => e.path !== path);
+  list.unshift({ path, kind });
   saveRecents(list);
 }
 
 /** Drop `path` from the recents list (e.g. it no longer exists). */
 function removeRecent(path: string): void {
-  saveRecents(loadRecents().filter((p) => p !== path));
+  saveRecents(loadRecents().filter((e) => e.path !== path));
 }
 
 // ── 히스토리 (사이드바 트리/검색 아래 최근 연 파일 목록) ────────────────────
@@ -732,14 +750,17 @@ function renderHistory(): void {
     historyList.appendChild(empty);
     return;
   }
-  for (const path of list) {
+  for (const { path, kind } of list) {
+    const isFolder = kind === 'folder';
+    // 활성 표시 기준이 다르다 — 파일은 보고 있는 탭, 폴더는 현재 열린 프로젝트.
+    const isActive = isFolder ? path === projectRoot : path === activePath;
     const item = document.createElement('button');
-    item.className = 'history-item' + (path === activePath ? ' active' : '');
+    item.className = 'history-item' + (isActive ? ' active' : '');
     item.title = path;
 
     const icon = document.createElement('span');
     icon.className = 'history-icon';
-    icon.innerHTML = SVG_FILE;
+    icon.innerHTML = isFolder ? SVG_FOLDER : SVG_FILE;
     const name = document.createElement('span');
     name.className = 'history-name';
     name.textContent = path.split(/[/\\]/).pop() || path;
@@ -747,6 +768,12 @@ function renderHistory(): void {
     item.appendChild(icon);
     item.appendChild(name);
     item.addEventListener('click', () => {
+      // 폴더를 openTabFromPath로 보내면 비-md 조기 return에 걸려 무반응이 된다.
+      // 실패 시 기록 제거는 openProject가 자체 catch에서 처리한다.
+      if (isFolder) {
+        void openProject(path);
+        return;
+      }
       openTabFromPath(path).catch((err) => {
         console.error('open history failed:', path, err);
         toast('파일 열기 실패 (목록서 제거): ' + path);
@@ -1325,12 +1352,17 @@ function showSidebar(): void {
 }
 
 /// silent: 시작 시 복원/드롭 판별 경로 — 실패해도 toast 없이 조용히 넘어간다.
+/// record: 히스토리에 기록할지. 시작 시 복원만 false — 사용자가 연 게 아니라서
+///   기록하면 앱을 켤 때마다 그 폴더가 최상단으로 튀어 실제 연 순서가 뒤섞인다.
+///   (드롭은 silent지만 사용자 행동이라 기록한다 — 두 플래그는 관심사가 다르다)
 /// lazy: 루트 한 단계만 스캔하고, 하위는 펼칠 때 scan_dir로 가져온다.
-async function openProject(root: string, silent = false): Promise<void> {
+async function openProject(root: string, silent = false, record = true): Promise<void> {
   let res: ScanDirResult;
   try {
     res = await scanDir(root);
   } catch (e) {
+    // 열 수 없는 폴더는 기록에 남길 이유가 없다 (record 여부와 무관).
+    removeRecent(root);
     if (silent) {
       // 복원 대상 폴더가 사라진 경우: 기억을 지운다.
       if (localStorage.getItem(PROJECT_KEY) === root) {
@@ -1356,6 +1388,10 @@ async function openProject(root: string, silent = false): Promise<void> {
   showSidebar();
   renderTree();
   localStorage.setItem(PROJECT_KEY, root);
+  // pushRecent→saveRecents가 renderHistory를 부르지만, record=false 경로에선
+  // 안 불리므로 폴더 active 강조를 위해 여기서도 명시적으로 갱신한다.
+  if (record) pushRecent(root, 'folder');
+  else renderHistory();
   try {
     await invoke('watch_dir', { root });
   } catch (e) {
@@ -1375,6 +1411,7 @@ function closeProject(): void {
   document.body.classList.remove('project-open');
   localStorage.removeItem(PROJECT_KEY);
   localStorage.removeItem(SIDEBAR_HIDDEN_KEY);
+  renderHistory(); // 폴더 active 강조 해제
 }
 
 /// tree-changed 수신 시 재스캔: 루트 + 펼쳐진 dir들만 병렬로 다시 읽는다.
@@ -2140,7 +2177,7 @@ async function startTauri(): Promise<void> {
   if (savedProject) {
     // openProject의 showSidebar()가 플래그를 지우므로 호출 전에 스냅샷
     const wasHidden = localStorage.getItem(SIDEBAR_HIDDEN_KEY) === '1';
-    await openProject(savedProject, true);
+    await openProject(savedProject, true, false); // 복원은 기록하지 않는다
     if (wasHidden) hideSidebar();
   }
 }
