@@ -1,6 +1,8 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { open, save } from '@tauri-apps/plugin-dialog';
+import { open, save, ask } from '@tauri-apps/plugin-dialog';
+import { check } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { openUrl, openPath } from '@tauri-apps/plugin-opener';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
@@ -832,6 +834,101 @@ btnFontInc.addEventListener('click', () => setFontSize(fontPx + FONT_STEP));
 // Click the numeric readout to reset to default. Separate element from the
 // steppers, so it never collides with rapid +/- clicking.
 fontReadout.addEventListener('click', () => setFontSize(FONT_DEFAULT));
+
+// ── 보기 옵션 (여유 간격 · 폭 제한) ───────────────────────────────────────────
+// 독립 토글 2개. html[data-*] 속성만 바꾸고 실제 스타일은 styles.css 담당.
+const VIEW_STYLE_KEY = 'mdview-view-style';
+const VIEW_WIDTH_KEY = 'mdview-view-width';
+const styleToggle = document.querySelector<HTMLButtonElement>('#style-toggle')!;
+const widthToggle = document.querySelector<HTMLButtonElement>('#width-toggle')!;
+
+let viewRelaxed = localStorage.getItem(VIEW_STYLE_KEY) === 'relaxed';
+let viewLimited = localStorage.getItem(VIEW_WIDTH_KEY) === 'limited';
+
+function applyViewOptions(): void {
+  document.documentElement.setAttribute('data-mdview-style', viewRelaxed ? 'relaxed' : 'default');
+  document.documentElement.setAttribute('data-mdview-width', viewLimited ? 'limited' : 'full');
+  styleToggle.classList.toggle('active', viewRelaxed);
+  widthToggle.classList.toggle('active', viewLimited);
+}
+
+styleToggle.addEventListener('click', () => {
+  viewRelaxed = !viewRelaxed;
+  localStorage.setItem(VIEW_STYLE_KEY, viewRelaxed ? 'relaxed' : 'default');
+  applyViewOptions();
+});
+widthToggle.addEventListener('click', () => {
+  viewLimited = !viewLimited;
+  localStorage.setItem(VIEW_WIDTH_KEY, viewLimited ? 'limited' : 'full');
+  applyViewOptions();
+});
+applyViewOptions();
+
+// ── 커스텀 툴팁 ───────────────────────────────────────────────────────────────
+// macOS WKWebView는 title 네이티브 툴팁을 그리지 않는다 — 전역 mouseover 위임으로
+// 직접 그린다. 최초 hover 시 title → data-tip 이관(브라우저 네이티브 툴팁과의
+// 중복 방지). 이후 코드가 title을 다시 세팅해도 다음 hover에서 재이관된다.
+const tooltipEl = document.createElement('div');
+tooltipEl.id = 'tooltip';
+document.body.append(tooltipEl);
+let tooltipTimer = 0;
+
+function hideTooltip(): void {
+  clearTimeout(tooltipTimer);
+  tooltipEl.classList.remove('show');
+}
+
+document.addEventListener('mouseover', (e) => {
+  hideTooltip();
+  const target = (e.target as Element | null)?.closest<HTMLElement>('[title], [data-tip]');
+  if (!target) return;
+  if (target.title) {
+    target.dataset.tip = target.title;
+    target.removeAttribute('title');
+  }
+  const text = target.dataset.tip;
+  if (!text) return;
+  tooltipTimer = window.setTimeout(() => {
+    const PAD = 4;
+    tooltipEl.textContent = text;
+    const tw = tooltipEl.offsetWidth;
+    const th = tooltipEl.offsetHeight;
+    const r = target.getBoundingClientRect();
+    const left = Math.min(Math.max(r.left + r.width / 2 - tw / 2, PAD), window.innerWidth - tw - PAD);
+    let top = r.bottom + 6;
+    if (top + th > window.innerHeight - PAD) top = r.top - th - 6;
+    tooltipEl.style.left = left + 'px';
+    tooltipEl.style.top = top + 'px';
+    tooltipEl.classList.add('show');
+  }, 350);
+});
+document.addEventListener('scroll', hideTooltip, true);
+document.addEventListener('mousedown', hideTooltip, true);
+window.addEventListener('blur', hideTooltip);
+
+// ── 자동 업데이트 ─────────────────────────────────────────────────────────────
+// 시작 3초 후 GitHub Releases의 latest.json을 확인한다(tauri-plugin-updater,
+// 엔드포인트/공개키는 tauri.conf.json). 오프라인 등 실패는 조용히 무시.
+async function checkForUpdates(): Promise<void> {
+  try {
+    const update = await check();
+    if (!update) return;
+    const yes = await ask(
+      `새 버전 ${update.version}이 있습니다 (현재 ${update.currentVersion}).\n지금 업데이트할까요?`,
+      { title: 'mdview 업데이트', kind: 'info', okLabel: '업데이트', cancelLabel: '나중에' },
+    );
+    if (!yes) return;
+    toast('업데이트 다운로드 중…');
+    await update.downloadAndInstall();
+    await relaunch();
+  } catch (err) {
+    // 네트워크 없음/릴리스에 latest.json 없음 등 — 뷰어 동작에 영향 주지 않는다.
+    console.error('update check failed:', err);
+  }
+}
+if (isTauri) {
+  window.setTimeout(() => void checkForUpdates(), 3000);
+}
 
 // ── Copy full path (탭 컨텍스트 메뉴 "경로 복사") ─────────────────────────────
 async function copyPathToClipboard(path: string): Promise<void> {

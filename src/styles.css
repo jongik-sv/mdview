@@ -378,6 +378,90 @@ html[data-mdview-theme='dark'] .font-readout:hover {
   padding: 24px 40px 80px;
 }
 
+/* ── 커스텀 툴팁 (main.ts 전역 위임 — WKWebView는 title 툴팁을 안 그린다) ── */
+#tooltip {
+  position: fixed;
+  z-index: 10001;
+  pointer-events: none;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  line-height: 1.4;
+  max-width: 420px;
+  overflow-wrap: anywhere;
+  opacity: 0;
+  transition: opacity 0.12s;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+}
+#tooltip.show {
+  opacity: 1;
+}
+html[data-mdview-theme='light'] #tooltip {
+  background: #24292f;
+  color: #ffffff;
+  border-color: #24292f;
+}
+html[data-mdview-theme='dark'] #tooltip {
+  background: #3d444d;
+  color: #f0f6fc;
+  border-color: #484f58;
+}
+body.pdf-exporting #tooltip {
+  display: none !important;
+}
+
+/* ── 보기 옵션 ──────────────────────────────────────────────────────────────
+   html[data-mdview-style]  기본(default) | 여유(relaxed) — 줄·문단 간격
+   html[data-mdview-width]  전체(full) | 제한(limited) — 900px 중앙 정렬
+   두 옵션은 독립 토글 (main.ts 보기 옵션 섹션). */
+html[data-mdview-width='limited'] #content {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+html[data-mdview-style='relaxed'] .markdown-body {
+  line-height: 1.65;
+}
+html[data-mdview-style='relaxed'] .markdown-body p,
+html[data-mdview-style='relaxed'] .markdown-body blockquote,
+html[data-mdview-style='relaxed'] .markdown-body ul,
+html[data-mdview-style='relaxed'] .markdown-body ol,
+html[data-mdview-style='relaxed'] .markdown-body dl,
+html[data-mdview-style='relaxed'] .markdown-body table,
+html[data-mdview-style='relaxed'] .markdown-body pre,
+html[data-mdview-style='relaxed'] .markdown-body details {
+  margin-bottom: 1.25em;
+}
+/* 중첩 리스트는 상위 li 안에서 붙어 있어야 한다 — github-markdown-css의
+   0 마진을 위 규칙(더 높은 특이도)이 덮으므로 다시 0으로. */
+html[data-mdview-style='relaxed'] .markdown-body ul ul,
+html[data-mdview-style='relaxed'] .markdown-body ul ol,
+html[data-mdview-style='relaxed'] .markdown-body ol ul,
+html[data-mdview-style='relaxed'] .markdown-body ol ol {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+html[data-mdview-style='relaxed'] .markdown-body h1,
+html[data-mdview-style='relaxed'] .markdown-body h2,
+html[data-mdview-style='relaxed'] .markdown-body h3,
+html[data-mdview-style='relaxed'] .markdown-body h4,
+html[data-mdview-style='relaxed'] .markdown-body h5,
+html[data-mdview-style='relaxed'] .markdown-body h6 {
+  margin-top: 2em;
+  margin-bottom: 0.7em;
+}
+html[data-mdview-style='relaxed'] .markdown-body li + li {
+  margin-top: 0.3em;
+}
+html[data-mdview-style='relaxed'] .markdown-body th,
+html[data-mdview-style='relaxed'] .markdown-body td {
+  padding: 8px 14px;
+}
+html[data-mdview-style='relaxed'] .markdown-body hr {
+  margin: 2em 0;
+}
+
 /* In-page #anchor jumps must clear the sticky toolbar (min-height 44px),
    else the target heading parks underneath it. */
 #content :is(h1, h2, h3, h4, h5, h6) {
@@ -1231,7 +1315,9 @@ body.pdf-exporting #editor {
    (@media print 쪽 Windows 경로와 동일한 처리). */
 body.pdf-exporting #content {
   display: block !important;
-  margin-left: 0 !important;
+  /* 보기 옵션 폭 제한(780px 중앙)도 출력에선 무효 — PDF는 항상 전체 폭. */
+  max-width: none !important;
+  margin: 0 !important;
 }
 /* 넓은 표/긴 코드 라인 — 화면에선 overflow:auto 내부 스크롤이라 스크롤 밖
    내용이 페인트되지 않고, 캡처(createPDF)/인쇄 모두 그 부분이 통째로
