@@ -456,6 +456,77 @@ html[data-mdview-theme='dark'] .mermaid-zoom-controls button {
 html[data-mdview-theme='dark'] .mermaid-zoom-controls button:hover {
   background: #212830;
 }
+.mermaid-scroll.panning {
+  cursor: grabbing;
+}
+
+/* 자세히 보기 — 다이어그램 전용 전체 화면 오버레이 */
+.mermaid-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: flex;
+}
+html[data-mdview-theme='light'] .mermaid-viewer {
+  background: #ffffff;
+}
+html[data-mdview-theme='dark'] .mermaid-viewer {
+  background: #0d1117;
+}
+.mermaid-viewer .mermaid-block {
+  flex: 1;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.mermaid-viewer .mermaid-scroll {
+  flex: 1;
+  /* flex + margin:auto — 작은 다이어그램은 화면 중앙, 큰 것은 정상 스크롤
+     (overflow 시 auto 마진은 0으로 접혀 잘리는 부분이 생기지 않는다). */
+  display: flex;
+}
+.mermaid-viewer .mermaid-block.zoomed .mermaid-scroll {
+  max-height: none;
+}
+.mermaid-viewer svg {
+  margin: auto;
+  /* flex item 기본 shrink가 줌 inline width를 도로 줄여버린다. */
+  flex-shrink: 0;
+}
+.mermaid-viewer .mermaid-zoom-controls {
+  opacity: 1;
+  pointer-events: auto;
+  top: 10px;
+  right: 52px;
+}
+.mermaid-viewer-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid #d0d7de;
+  background: #ffffff;
+  color: #1f2328;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.mermaid-viewer-close:hover {
+  background: #f3f4f6;
+}
+html[data-mdview-theme='dark'] .mermaid-viewer-close {
+  border-color: #3d444d;
+  background: #151b23;
+  color: #f0f6fc;
+}
+html[data-mdview-theme='dark'] .mermaid-viewer-close:hover {
+  background: #212830;
+}
 
 .mermaid-error {
   color: #cf222e;

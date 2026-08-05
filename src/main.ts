@@ -481,11 +481,15 @@ function setupMermaidZoom(block: HTMLElement): void {
   scroll.appendChild(svgEl);
   const controls = document.createElement('div');
   controls.className = 'mermaid-zoom-controls';
-  for (const [act, txt, title] of [
+  // 전체화면 뷰어 안에서는 ⛶(또 여는 재귀)를 달지 않는다.
+  const inViewer = block.closest('.mermaid-viewer') !== null;
+  const buttons: Array<[string, string, string]> = [
     ['in', '+', '확대'],
     ['out', '−', '축소'],
     ['reset', '⟳', '원래 크기'],
-  ]) {
+  ];
+  if (!inViewer) buttons.push(['view', '⛶', '자세히 보기 — 전체 화면']);
+  for (const [act, txt, title] of buttons) {
     const b = document.createElement('button');
     b.dataset.zoom = act;
     b.textContent = txt;
@@ -525,7 +529,7 @@ function setupMermaidZoom(block: HTMLElement): void {
     else if (act === 'reset') {
       scale = 0;
       apply();
-    }
+    } else if (act === 'view') openMermaidViewer(svgEl);
   });
   scroll.addEventListener(
     'wheel',
@@ -536,6 +540,82 @@ function setupMermaidZoom(block: HTMLElement): void {
     },
     { passive: false }
   );
+
+  // 휠클릭(중버튼) 드래그 팬. mousedown preventDefault가 브라우저 오토스크롤을
+  // 막는다(pointerdown만으론 부족).
+  scroll.addEventListener('mousedown', (e) => {
+    if (e.button === 1) e.preventDefault();
+  });
+  scroll.addEventListener('auxclick', (e) => {
+    if (e.button === 1) e.preventDefault();
+  });
+  scroll.addEventListener('pointerdown', (e) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    try {
+      scroll.setPointerCapture(e.pointerId);
+    } catch {
+      // 합성 이벤트 등 캡처 불가 — 캡처 없이도 팬은 동작한다
+    }
+    const sx = e.clientX;
+    const sy = e.clientY;
+    const sl = scroll.scrollLeft;
+    const st = scroll.scrollTop;
+    scroll.classList.add('panning');
+    const move = (ev: PointerEvent): void => {
+      scroll.scrollLeft = sl - (ev.clientX - sx);
+      scroll.scrollTop = st - (ev.clientY - sy);
+    };
+    const up = (): void => {
+      scroll.removeEventListener('pointermove', move);
+      scroll.removeEventListener('pointerup', up);
+      scroll.removeEventListener('pointercancel', up);
+      scroll.classList.remove('panning');
+    };
+    scroll.addEventListener('pointermove', move);
+    scroll.addEventListener('pointerup', up);
+    scroll.addEventListener('pointercancel', up);
+  });
+}
+
+/**
+ * "자세히 보기" — 다이어그램 하나만 전체 화면 오버레이로. SVG를 복제해
+ * setupMermaidZoom을 다시 태우므로 줌/휠/팬이 인라인과 동일하게 동작한다.
+ * (복제라 본문 쪽 줌 상태는 건드리지 않는다.) Esc 또는 ✕로 닫기.
+ */
+function openMermaidViewer(srcSvg: SVGSVGElement): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'mermaid-viewer';
+  const block = document.createElement('div');
+  block.className = 'mermaid-block';
+  const clone = srcSvg.cloneNode(true) as SVGSVGElement;
+  clone.id = clone.id + '-viewer'; // 문서 내 id 중복 방지
+  // 인라인 줌 상태는 가져오지 않는다 — fit으로 시작. max-width는 mermaid
+  // 기본값(자연 폭)으로 되돌린다(원본이 줌 중이면 'none'이 복제되어 있다).
+  clone.style.width = '';
+  const vbW = clone.viewBox.baseVal.width;
+  if (vbW) clone.style.maxWidth = `${vbW}px`;
+  block.appendChild(clone);
+  const close = document.createElement('button');
+  close.className = 'mermaid-viewer-close';
+  close.textContent = '✕';
+  close.title = '닫기 (Esc)';
+  overlay.append(block, close);
+  document.body.appendChild(overlay);
+  setupMermaidZoom(block);
+
+  const closeViewer = (): void => {
+    window.removeEventListener('keydown', onKey, true);
+    overlay.remove();
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === 'Escape') {
+      e.stopPropagation();
+      closeViewer();
+    }
+  };
+  close.addEventListener('click', closeViewer);
+  window.addEventListener('keydown', onKey, true);
 }
 
 // ── PDF export ────────────────────────────────────────────────────────────────
