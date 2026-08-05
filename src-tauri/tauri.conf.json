@@ -37,6 +37,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -61,5 +62,13 @@
         ]
       }
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU4MkI4Q0U2NDAzOUNGNzcKUldSM3p6bEE1b3dyNkhkUUpCNGtZY2tnajA1L2ZWQ3AvbncrNHA0dE1tUzErbythbVNhck56SmQK",
+      "endpoints": [
+        "https://github.com/jongik-sv/mdview/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

@@ -981,6 +981,10 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        // 자동 업데이트: GitHub Releases latest.json 확인 (main.ts 시작 시 체크).
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        // 업데이트 설치 후 relaunch용.
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             app.manage(AppState {
                 watchers: Mutex::new(HashMap::new()),

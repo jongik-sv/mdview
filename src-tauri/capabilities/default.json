@@ -11,6 +11,8 @@
       "allow": [{ "path": "/**" }, { "path": "**" }, { "path": "$HOME/**" }]
     },
     "dialog:default",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

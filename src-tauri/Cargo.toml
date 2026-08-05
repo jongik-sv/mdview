@@ -27,6 +27,8 @@ url = "2.5.8"
 tauri-plugin-dialog = "2.7.1"
 tauri-plugin-clipboard-manager = "2"
 tauri-plugin-window-state = "2"
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 # Windows/Linux: route a second launch (double-clicking another .md) into the
 # running process instead of spawning a new instance. macOS already does this
