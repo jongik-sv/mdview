@@ -976,6 +976,8 @@ pub fn run() {
     }
 
     let app = builder
+        // 종료 시 창 크기·위치·모니터 저장, 시작 시 복원.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())

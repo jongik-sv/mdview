@@ -470,6 +470,11 @@ function setupMermaidZoom(block: HTMLElement): void {
   if (!svgEl) return;
   const naturalW = svgEl.viewBox.baseVal.width || svgEl.getBoundingClientRect().width;
   if (!naturalW) return;
+  // mermaid는 svg에 inline `style="max-width: NNNpx"`를 직접 박는다(작은
+  // 다이어그램이 컨테이너 폭으로 늘어나지 않게). 줌이 이 값을 덮으므로 리셋
+  // 때 원복할 수 있게 보관한다 — ''로 지우면 width:100% svg가 컨테이너 폭으로
+  // 부풀어 "축소하다 갑자기 커지는" 점프가 생긴다.
+  const origMaxW = svgEl.style.maxWidth;
 
   const scroll = document.createElement('div');
   scroll.className = 'mermaid-scroll';
@@ -497,7 +502,7 @@ function setupMermaidZoom(block: HTMLElement): void {
       svgEl.style.maxWidth = 'none';
     } else {
       svgEl.style.width = '';
-      svgEl.style.maxWidth = '';
+      svgEl.style.maxWidth = origMaxW;
     }
   };
   const zoom = (dir: 1 | -1): void => {
@@ -1161,7 +1166,86 @@ function renderTabBar(): void {
   btnReveal.disabled = activePath === null; // 문서 없으면 과녁 비활성
   renderHistory(); // 히스토리의 활성 파일 표시 갱신
   updateTreeHighlight(true); // 탭 전환은 트리도 활성 파일 위치로 따라간다
+  // 탭 추가/닫기/순서변경/활성화 전부 여기를 지난다 — 세션 저장 단일 훅.
+  saveSession();
 }
+
+// ── Session restore (재시작 시 열린 탭 복원) ─────────────────────────────────
+const SESSION_KEY = 'mdview-session';
+interface SavedSession {
+  paths: string[];
+  active: string | null;
+  scroll: Record<string, number>;
+}
+let restoringSession = false;
+
+function saveSession(): void {
+  // 복원 루프 중간 상태나 PDF export의 일시적 레이아웃을 세션으로 남기지 않는다.
+  if (restoringSession || pdfExporting) return;
+  const scroll: Record<string, number> = {};
+  for (const t of tabs) scroll[t.path] = t.path === activePath ? window.scrollY : t.scrollY;
+  const s: SavedSession = { paths: tabs.map((t) => t.path), active: activePath, scroll };
+  localStorage.setItem(SESSION_KEY, JSON.stringify(s));
+}
+
+function loadSession(): SavedSession | null {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) return null;
+    const s = JSON.parse(raw) as Partial<SavedSession>;
+    if (!Array.isArray(s.paths)) return null;
+    return {
+      paths: s.paths.filter((p): p is string => typeof p === 'string'),
+      active: typeof s.active === 'string' ? s.active : null,
+      scroll: s.scroll && typeof s.scroll === 'object' ? s.scroll : {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 저장된 세션의 탭들을 다시 연다. 삭제된 파일은 조용히 스킵. 복원은 열람
+ * 기록이 아니므로 pushRecent 하지 않는다(openTabFromPath를 안 쓰는 이유).
+ */
+async function restoreSession(): Promise<void> {
+  const s = loadSession();
+  if (!s || s.paths.length === 0) return;
+  restoringSession = true;
+  try {
+    for (const p of s.paths) {
+      if (findTab(p)) continue;
+      try {
+        const c = await invoke<string>('read_file', { path: p });
+        const t = _addTab(p, c);
+        t.scrollY = s.scroll[p] ?? 0;
+        t.mtime = (await fetchMtime(p)) ?? 0;
+        await invoke('watch_file', { path: p });
+      } catch {
+        // 파일이 사라짐 — 세션에서 자연 탈락
+      }
+    }
+  } finally {
+    restoringSession = false;
+  }
+  if (tabs.length > 0) {
+    const target = s.active !== null && findTab(s.active) ? s.active : tabs[tabs.length - 1].path;
+    await activate(target);
+  }
+  saveSession(); // 탈락분 반영
+}
+
+// 활성 탭의 스크롤 위치도 세션에 유지 — 종료 이벤트(beforeunload)는 WKWebView
+// 에서 신뢰할 수 없어 수시 저장한다.
+let scrollSaveTimer: ReturnType<typeof setTimeout> | undefined;
+window.addEventListener(
+  'scroll',
+  () => {
+    clearTimeout(scrollSaveTimer);
+    scrollSaveTimer = setTimeout(saveSession, 500);
+  },
+  { passive: true },
+);
 
 async function renderActive(): Promise<void> {
   if (activePath === null) {
@@ -2331,12 +2415,13 @@ async function startTauri(): Promise<void> {
     }
   });
 
+  // 이전 세션의 탭 복원 → 더블클릭/CLI로 넘어온 파일은 그 위에 얹어 활성화.
+  await restoreSession();
   const initial = await invoke<string[]>('get_initial_file');
-  if (initial.length > 0) {
-    for (const p of initial) {
-      await openTabFromPath(p);
-    }
-  } else {
+  for (const p of initial) {
+    await openTabFromPath(p);
+  }
+  if (tabs.length === 0) {
     await renderActive(); // show placeholder
   }
 
