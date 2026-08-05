@@ -589,7 +589,13 @@ function openMermaidViewer(srcSvg: SVGSVGElement): void {
   const block = document.createElement('div');
   block.className = 'mermaid-block';
   const clone = srcSvg.cloneNode(true) as SVGSVGElement;
-  clone.id = clone.id + '-viewer'; // 문서 내 id 중복 방지
+  const oldId = srcSvg.id;
+  clone.id = oldId + '-viewer'; // 문서 내 id 중복 방지
+  // mermaid는 스타일을 svg 내부 <style>에 `#<id> .node ...` 식으로 스코프한다
+  // — id만 바꾸면 스타일이 전부 풀려 검정 덩어리로 렌더된다. 셀렉터도 치환.
+  clone.querySelectorAll('style').forEach((s) => {
+    s.textContent = (s.textContent ?? '').split(`#${oldId}`).join(`#${clone.id}`);
+  });
   // 인라인 줌 상태는 가져오지 않는다 — fit으로 시작. max-width는 mermaid
   // 기본값(자연 폭)으로 되돌린다(원본이 줌 중이면 'none'이 복제되어 있다).
   clone.style.width = '';
