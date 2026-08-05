@@ -1,4 +1,5 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { getVersion } from '@tauri-apps/api/app';
 import { listen } from '@tauri-apps/api/event';
 import { open, save, ask } from '@tauri-apps/plugin-dialog';
 import { check } from '@tauri-apps/plugin-updater';
@@ -907,12 +908,19 @@ document.addEventListener('mousedown', hideTooltip, true);
 window.addEventListener('blur', hideTooltip);
 
 // ── 자동 업데이트 ─────────────────────────────────────────────────────────────
-// 시작 3초 후 GitHub Releases의 latest.json을 확인한다(tauri-plugin-updater,
-// 엔드포인트/공개키는 tauri.conf.json). 오프라인 등 실패는 조용히 무시.
-async function checkForUpdates(): Promise<void> {
+// 시작 3초 후 + 4시간마다 GitHub Releases의 latest.json을 확인한다
+// (tauri-plugin-updater, 엔드포인트/공개키는 tauri.conf.json). 자동 체크의
+// 실패(오프라인 등)는 조용히 무시하고, 버전 뱃지 클릭(수동)일 때만 결과를
+// 토스트로 알린다.
+const versionReadout = document.querySelector<HTMLButtonElement>('#version-readout')!;
+
+async function checkForUpdates(manual = false): Promise<void> {
   try {
     const update = await check();
-    if (!update) return;
+    if (!update) {
+      if (manual) toast('최신 버전입니다.');
+      return;
+    }
     const yes = await ask(
       `새 버전 ${update.version}이 있습니다 (현재 ${update.currentVersion}).\n지금 업데이트할까요?`,
       { title: 'mdview 업데이트', kind: 'info', okLabel: '업데이트', cancelLabel: '나중에' },
@@ -924,10 +932,17 @@ async function checkForUpdates(): Promise<void> {
   } catch (err) {
     // 네트워크 없음/릴리스에 latest.json 없음 등 — 뷰어 동작에 영향 주지 않는다.
     console.error('update check failed:', err);
+    if (manual) toast('업데이트 확인 실패: ' + err);
   }
 }
 if (isTauri) {
+  versionReadout.hidden = false;
+  void getVersion().then((v) => {
+    versionReadout.textContent = 'v' + v;
+  });
+  versionReadout.addEventListener('click', () => void checkForUpdates(true));
   window.setTimeout(() => void checkForUpdates(), 3000);
+  window.setInterval(() => void checkForUpdates(), 4 * 60 * 60 * 1000);
 }
 
 // ── Copy full path (탭 컨텍스트 메뉴 "경로 복사") ─────────────────────────────
