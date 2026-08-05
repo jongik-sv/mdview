@@ -448,10 +448,89 @@ async function renderAllMermaid(blocks: string[], theme: 'default' | 'dark'): Pr
     try {
       const { svg } = await mermaid.render('mmd-' + mmdSeq++, src);
       el.innerHTML = svg;
+      setupMermaidZoom(el);
     } catch (e) {
       el.innerHTML = `<pre class="mermaid-error">mermaid error: ${String(e)}</pre>`;
     }
   }
+}
+
+const MMD_ZOOM_STEP = 1.25;
+const MMD_ZOOM_MAX = 4;
+
+/**
+ * 큰 다이어그램은 max-width:100%로 폭에 맞춰 축소되어 글자가 안 보인다 —
+ * 렌더된 SVG를 스크롤 컨테이너로 감싸고 [+][−][⟳] 오버레이와 Ctrl/⌘+휠 줌을
+ * 단다. 배율은 svg inline width(viewBox 폭 × scale)로만 표현해 글자가 벡터로
+ * 선명하게 커지고, 스크롤은 네이티브 overflow가 담당한다. 재렌더(테마 전환·
+ * 문서 갱신·PDF export)는 innerHTML을 통째로 갈아 상태가 자연 리셋된다.
+ */
+function setupMermaidZoom(block: HTMLElement): void {
+  const svgEl = block.querySelector('svg');
+  if (!svgEl) return;
+  const naturalW = svgEl.viewBox.baseVal.width || svgEl.getBoundingClientRect().width;
+  if (!naturalW) return;
+
+  const scroll = document.createElement('div');
+  scroll.className = 'mermaid-scroll';
+  scroll.appendChild(svgEl);
+  const controls = document.createElement('div');
+  controls.className = 'mermaid-zoom-controls';
+  for (const [act, txt, title] of [
+    ['in', '+', '확대'],
+    ['out', '−', '축소'],
+    ['reset', '⟳', '원래 크기'],
+  ]) {
+    const b = document.createElement('button');
+    b.dataset.zoom = act;
+    b.textContent = txt;
+    b.title = title;
+    controls.appendChild(b);
+  }
+  block.append(controls, scroll);
+
+  let scale = 0; // 0 = fit(폭 맞춤, inline width 없음)
+  const apply = (): void => {
+    block.classList.toggle('zoomed', scale > 0);
+    if (scale > 0) {
+      svgEl.style.width = `${Math.round(naturalW * scale)}px`;
+      svgEl.style.maxWidth = 'none';
+    } else {
+      svgEl.style.width = '';
+      svgEl.style.maxWidth = '';
+    }
+  };
+  const zoom = (dir: 1 | -1): void => {
+    if (dir === 1) {
+      // fit에서 시작하는 확대는 현재 표시 배율 기준 — 첫 클릭이 튀지 않게.
+      const cur = scale > 0 ? scale : svgEl.getBoundingClientRect().width / naturalW;
+      scale = Math.min(MMD_ZOOM_MAX, cur * MMD_ZOOM_STEP);
+    } else if (scale > 0) {
+      scale /= MMD_ZOOM_STEP;
+      // fit 폭 이하로 내려가면 fit 복귀(fit보다 작게 볼 이유가 없다).
+      const fitW = Math.min(scroll.clientWidth, naturalW);
+      if (naturalW * scale <= fitW + 1) scale = 0;
+    }
+    apply();
+  };
+  controls.addEventListener('click', (e) => {
+    const act = (e.target as HTMLElement).closest('button')?.dataset.zoom;
+    if (act === 'in') zoom(1);
+    else if (act === 'out') zoom(-1);
+    else if (act === 'reset') {
+      scale = 0;
+      apply();
+    }
+  });
+  scroll.addEventListener(
+    'wheel',
+    (e) => {
+      if (!e.ctrlKey && !e.metaKey) return;
+      e.preventDefault();
+      zoom(e.deltaY < 0 ? 1 : -1);
+    },
+    { passive: false }
+  );
 }
 
 // ── PDF export ────────────────────────────────────────────────────────────────

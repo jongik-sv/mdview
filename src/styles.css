@@ -396,10 +396,65 @@ html[data-mdview-theme='dark'] .font-readout:hover {
 .mermaid-block {
   margin: 16px 0;
   text-align: center;
+  position: relative;
 }
 .mermaid-block svg {
   max-width: 100%;
   height: auto;
+}
+
+/* 줌: svg inline width(main.ts setupMermaidZoom)가 컨테이너보다 커지면
+   네이티브 스크롤바. */
+.mermaid-scroll {
+  overflow: auto;
+}
+.mermaid-block.zoomed .mermaid-scroll {
+  max-height: 85vh;
+}
+/* text-align:center인 inline svg가 컨테이너보다 넓으면 왼쪽 끝이 스크롤로
+   닿지 않는다 — 줌 상태에서만 block 전환. */
+.mermaid-block.zoomed svg {
+  display: block;
+}
+.mermaid-zoom-controls {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  /* sticky #toolbar(z-index:10)보다 아래 — 스크롤로 지나갈 때 툴바를 덮지 않게. */
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.mermaid-block:hover .mermaid-zoom-controls,
+.mermaid-zoom-controls:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+.mermaid-zoom-controls button {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid #d0d7de;
+  background: #ffffff;
+  color: #1f2328;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.mermaid-zoom-controls button:hover {
+  background: #f3f4f6;
+}
+html[data-mdview-theme='dark'] .mermaid-zoom-controls button {
+  border-color: #3d444d;
+  background: #151b23;
+  color: #f0f6fc;
+}
+html[data-mdview-theme='dark'] .mermaid-zoom-controls button:hover {
+  background: #212830;
 }
 
 .mermaid-error {
@@ -1128,6 +1183,16 @@ body.pdf-exporting .mermaid-block svg {
   display: block;
   margin: 0 auto;
   max-height: var(--pdf-usable-h, none);
+  /* 줌 inline width 무효화 — export 직전 재렌더로 리셋되지만 CSS로도 보증. */
+  width: auto !important;
+  max-width: 100% !important;
+}
+body.pdf-exporting .mermaid-zoom-controls {
+  display: none !important;
+}
+body.pdf-exporting .mermaid-scroll {
+  overflow: visible !important;
+  max-height: none !important;
 }
 /* Per-page header/footer bands, absolutely positioned in document coords by
    decorateForPdf() so they land inside each sliced A4 page (macOS export). */
