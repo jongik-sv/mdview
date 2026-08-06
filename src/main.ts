@@ -914,7 +914,13 @@ window.addEventListener('blur', hideTooltip);
 // 토스트로 알린다.
 const versionReadout = document.querySelector<HTMLButtonElement>('#version-readout')!;
 
+// 중복 실행 가드 — 시작 체크·주기 체크·뱃지 연타가 겹치면 같은 다이얼로그가
+// 여러 장 쌓여 "나중에를 눌러도 안 닫히는" 것처럼 보인다.
+let updateCheckBusy = false;
+
 async function checkForUpdates(manual = false): Promise<void> {
+  if (updateCheckBusy) return;
+  updateCheckBusy = true;
   try {
     const update = await check();
     if (!update) {
@@ -933,6 +939,8 @@ async function checkForUpdates(manual = false): Promise<void> {
     // 네트워크 없음/릴리스에 latest.json 없음 등 — 뷰어 동작에 영향 주지 않는다.
     console.error('update check failed:', err);
     if (manual) toast('업데이트 확인 실패: ' + err);
+  } finally {
+    updateCheckBusy = false;
   }
 }
 if (isTauri) {
