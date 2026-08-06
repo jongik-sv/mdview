@@ -23,6 +23,19 @@ A fast, native Markdown viewer for macOS and Windows, built with [Tauri 2](https
 | Render   | markdown-it, highlight.js, mermaid, github-markdown-css |
 | File I/O | Rust commands + `notify` file watcher             |
 
+## Install (macOS)
+
+한 줄 설치 — curl 경유라 quarantine이 붙지 않아 서명/공증 없이도 바로 실행된다 (`xattr` 불필요):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jongik-sv/mdview/main/install.sh | sh
+```
+
+Apple Silicon / Intel은 자동 감지된다. 설치 후에는 앱이 시작 시 새 릴리스를 확인해 자동 업데이트한다.
+
+> DMG를 브라우저로 내려받는 경우 macOS Gatekeeper가 미공증 앱을 차단한다 —
+> 그때는 `xattr -d com.apple.quarantine /Applications/mdview.app` 후 실행.
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) and [pnpm](https://pnpm.io/)
