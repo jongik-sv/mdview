@@ -1010,9 +1010,12 @@ function saveRecents(list: RecentEntry[]): void {
   renderHistory(); // 기록 변경의 단일 경로 — 목록 UI도 여기서 항상 동기화
 }
 
-/** Record `path` as the most-recent entry (dedup, cap). */
+/** Record `path` in recents (dedup, cap). 이미 목록에 있으면 자리를 유지한다 —
+    재선택할 때마다 맨 앞으로 끌어올리면 히스토리 순서가 계속 뒤섞여
+    같은 항목을 다시 찾기 어렵다. 새 항목만 맨 앞에 들어간다. */
 function pushRecent(path: string, kind: RecentKind = 'file'): void {
-  const list = loadRecents().filter((e) => e.path !== path);
+  const list = loadRecents();
+  if (list.some((e) => e.path === path)) return;
   list.unshift({ path, kind });
   saveRecents(list);
 }
