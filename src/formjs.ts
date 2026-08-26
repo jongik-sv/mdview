@@ -18,6 +18,56 @@ import './formjs-block.css';
 
 let active: Array<() => void> = [];
 
+/** 블록 저장 핸들러 — main.ts가 등록 (fence 교체 + 파일 쓰기 + 재렌더) */
+export type FormBlockSaveHandler = (blockIdx: number, newJson: string) => Promise<void>;
+let saveHandler: FormBlockSaveHandler | null = null;
+export function setFormBlockSaveHandler(h: FormBlockSaveHandler): void {
+  saveHandler = h;
+}
+
+/**
+ * ✏️ 편집 진입 토글 — 현재 뷰어 전용 운영이라 비활성.
+ * 편집 UI(에디터 모달·fence 교체·write_file)는 배선 완료 상태로,
+ * true로 바꾸면 블록 호버 시 편집 버튼이 노출된다.
+ */
+const FORM_EDIT_ENABLED = false;
+
+/** 한 번에 하나의 에디터만 (single-editor lock) */
+let editorOpen = false;
+
+async function openEditor(blockIdx: number, schema: Record<string, unknown>): Promise<void> {
+  if (editorOpen) return;
+  editorOpen = true;
+  try {
+    // 에디터 번들은 무겁다 — 첫 편집 시점에만 동적 로드
+    const { mountEmbeddedEditorModal } = await import(
+      '@form-js-designer/designer-editor-host/embedded'
+    );
+    await mountEmbeddedEditorModal({
+      initialSchema: schema as { type: string; components: unknown[] },
+      onSave: async (next) => {
+        if (saveHandler) await saveHandler(blockIdx, JSON.stringify(next, null, 2));
+      },
+      onClose: () => {
+        editorOpen = false;
+      },
+    });
+  } catch (e) {
+    editorOpen = false;
+    console.error('form-js 에디터 오픈 실패:', e);
+  }
+}
+
+function mountEditButton(el: HTMLElement, blockIdx: number, schema: Record<string, unknown>): void {
+  const btn = document.createElement('button');
+  btn.className = 'form-js-edit-btn';
+  btn.title = 'form-js 블록 편집';
+  btn.setAttribute('aria-label', 'form-js 블록 편집');
+  btn.textContent = '✏️';
+  btn.addEventListener('click', () => void openEditor(blockIdx, schema));
+  el.appendChild(btn);
+}
+
 /** mdview 테마(documentElement[data-mdview-theme]) → 블록 theme-* 클래스 동기화 */
 function applyBlockTheme(el: HTMLElement): void {
   const dark = document.documentElement.getAttribute('data-mdview-theme') === 'dark';
@@ -76,6 +126,7 @@ export async function renderAllFormJs(formBlocks: string[]): Promise<void> {
         observer.disconnect();
         form.destroy();
       });
+      if (FORM_EDIT_ENABLED) mountEditButton(el, idx, schema);
     } catch (e) {
       observer.disconnect();
       el.innerHTML = '';

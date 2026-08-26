@@ -10,8 +10,8 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import mermaid from 'mermaid';
 import 'katex/dist/katex.min.css';
 import sample from './fixtures/sample.md?raw';
-import { renderMarkdown } from './render';
-import { renderAllFormJs } from './formjs';
+import { renderMarkdown, replaceFormFence } from './render';
+import { renderAllFormJs, setFormBlockSaveHandler } from './formjs';
 import {
   initTheme,
   setMode,
@@ -2647,6 +2647,31 @@ async function startTauri(): Promise<void> {
     if (wasHidden) hideSidebar();
   }
 }
+
+// form-js 블록 편집 저장: fence 본문 교체 → 파일 쓰기 → 재렌더.
+// 파일 쓰기가 watcher를 깨우지만 reload 내용이 tab.content와 같아 무해(중복 렌더 1회).
+setFormBlockSaveHandler(async (blockIdx, newJson) => {
+  if (activePath === null) return;
+  const tab = findTab(activePath);
+  if (!tab) return;
+  const updated = replaceFormFence(tab.content, blockIdx, newJson);
+  if (updated === null) {
+    toast('form-js 블록 저장 실패: 원본에서 블록을 찾지 못했습니다');
+    return;
+  }
+  tab.content = updated;
+  if (isTauri) {
+    try {
+      await invoke('write_file', { path: activePath, content: updated });
+      tab.mtime = (await fetchMtime(activePath)) ?? tab.mtime;
+    } catch (e) {
+      toast(`form-js 블록 저장 실패: ${String(e)}`);
+      return;
+    }
+  }
+  await renderActive();
+  toast('form-js 블록 저장됨');
+});
 
 if (isTauri) {
   void startTauri();

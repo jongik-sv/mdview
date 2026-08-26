@@ -930,6 +930,13 @@ fn file_mtime(path: String) -> Result<u64, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Overwrite `path` with `content` (UTF-8). Used by the form-js block editor
+/// to write the edited fence JSON back into the source markdown file.
+#[tauri::command]
+fn write_file(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Win/Linux: the file path arrives as argv[1]. On macOS this is empty for
@@ -1019,6 +1026,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_initial_file,
             read_file,
+            write_file,
             watch_file,
             unwatch_file,
             file_mtime,

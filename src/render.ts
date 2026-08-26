@@ -75,3 +75,41 @@ export function renderMarkdown(src: string): {
 
   return { html: md.render(src), blocks, formBlocks };
 }
+
+/**
+ * 마크다운 원본에서 blockIdx번째 ```form-js 펜스의 본문만 newBody로 교체한다.
+ * 펜스 문자(`/~)·길이·들여쓰기는 보존. 대상 블록을 못 찾거나 펜스가 닫히지
+ * 않았으면 null (원본 손상 방지 — 저장 측이 에러 처리).
+ * renderMarkdown의 fence 매칭(info 첫 단어 === 'form-js')과 동일 순서로 센다.
+ */
+export function replaceFormFence(
+  src: string,
+  blockIdx: number,
+  newBody: string,
+): string | null {
+  const lines = src.split('\n');
+  let found = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const open = lines[i].match(/^(\s{0,3})(`{3,}|~{3,})(.*)$/);
+    if (!open) continue;
+    const fence = open[2];
+    const info = open[3].trim().split(/\s+/)[0] ?? '';
+    // 닫는 펜스: 같은 문자, 길이 이상, 내용 없음
+    const closeRe = new RegExp(`^\\s{0,3}${fence[0] === '~' ? '~' : '\`'}{${fence.length},}\\s*$`);
+    let j = i + 1;
+    while (j < lines.length && !closeRe.test(lines[j])) j++;
+    if (info === 'form-js') {
+      found++;
+      if (found === blockIdx) {
+        if (j >= lines.length) return null; // 닫히지 않은 펜스
+        const indent = open[1];
+        const body = newBody.split('\n').map((l) => (l ? indent + l : l));
+        return [...lines.slice(0, i + 1), ...body, ...lines.slice(j)].join('\n');
+      }
+    }
+    // 펜스 본문은 통째로 건너뜀 (본문 안 텍스트를 펜스로 오인 방지) —
+    // info 없는 플레인 펜스도 동일하게 스킵해야 renderMarkdown과 카운트가 맞는다.
+    i = j;
+  }
+  return null;
+}

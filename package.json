@@ -1,7 +1,7 @@
 {
   "name": "mdview",
   "private": true,
-  "version": "0.1.27",
+  "version": "0.1.28",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,9 +11,12 @@
     "bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
+    "@bpmn-io/form-js-editor": "^1.25.0",
     "@bpmn-io/form-js-viewer": "^1.25.0",
     "@form-js-designer/designer-components": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-components",
     "@form-js-designer/designer-core": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-core",
+    "@form-js-designer/designer-editor-host": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-editor-host",
+    "@form-js-designer/designer-i18n": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-i18n",
     "@form-js-designer/designer-runtime": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-runtime",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
