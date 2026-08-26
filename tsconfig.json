@@ -8,6 +8,11 @@
 
     /* Bundler mode */
     "moduleResolution": "bundler",
+    "paths": {
+      "@form-js-designer/designer-core": ["./src/types/designer-core.d.ts"],
+      "@form-js-designer/designer-components": ["./src/types/designer-components.d.ts"],
+      "@form-js-designer/designer-runtime": ["./src/types/designer-runtime.d.ts"]
+    },
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,

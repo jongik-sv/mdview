@@ -314,3 +314,71 @@ sequenceDiagram
 $$ \text{RMTL\_YLD\_AW}_i = R_O \times \frac{W_i}{\sum W} \qquad \text{COIL\_YLD\_AW}_i = C_O \times \frac{W_i}{\sum W} $$
 
 > 식별자 이름의 `_` 는 `\text{...}` 로 감싸고 `\_` 로 escape 해야 아래첨자로 깨지지 않는다. 마지막 인덱스 `_i` 만 진짜 첨자.
+
+## form-js 폼
+
+` ```form-js ` 펜스 블록은 form-js viewer(+ designer 확장 컴포넌트)로 렌더된다.
+
+```form-js
+{
+  "schemaVersion": 19,
+  "type": "default",
+  "components": [
+    {
+      "type": "card",
+      "id": "card-demo-1",
+      "header": "신고 접수 양식",
+      "padding": "md",
+      "elevation": 1,
+      "headerTag": "h3",
+      "components": [
+        { "type": "textfield", "id": "tf-name", "key": "name", "label": "이름" },
+        {
+          "type": "select",
+          "id": "sel-severity",
+          "key": "severity",
+          "label": "심각도",
+          "values": [
+            { "label": "낮음", "value": "low" },
+            { "label": "보통", "value": "medium" },
+            { "label": "높음", "value": "high" }
+          ]
+        },
+        { "type": "textarea", "id": "ta-desc", "key": "description", "label": "상세 내용" },
+        { "type": "checkbox", "id": "cb-urgent", "key": "urgent", "label": "긴급 처리 요청" }
+      ]
+    },
+    {
+      "type": "tabs",
+      "id": "tabs-demo-1",
+      "orientation": "horizontal",
+      "defaultValue": "tabpanel-demo-a",
+      "layout": { "height": 220 },
+      "components": [
+        {
+          "type": "tabPanel",
+          "id": "tabpanel-demo-a",
+          "label": "기본 정보",
+          "components": [
+            { "type": "textfield", "id": "tf-line", "key": "line", "label": "라인" }
+          ]
+        },
+        {
+          "type": "tabPanel",
+          "id": "tabpanel-demo-b",
+          "label": "추가 정보",
+          "components": [
+            { "type": "number", "id": "num-count", "key": "count", "label": "수량" }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+잘못된 JSON은 블록 단위 에러 배너로 표시된다 (전체 렌더는 유지):
+
+```form-js
+{ "schemaVersion": 19, "type": "default", "components": [ }
+```

@@ -11,6 +11,10 @@
     "bump": "node scripts/bump-version.mjs"
   },
   "dependencies": {
+    "@bpmn-io/form-js-viewer": "^1.25.0",
+    "@form-js-designer/designer-components": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-components",
+    "@form-js-designer/designer-core": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-core",
+    "@form-js-designer/designer-runtime": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-runtime",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
@@ -24,7 +28,8 @@
     "markdown-it": "^14.2.0",
     "markdown-it-task-lists": "^2.1.1",
     "mermaid": "^11.15.0",
-    "monaco-editor": "^0.55.1"
+    "monaco-editor": "^0.55.1",
+    "preact": "^10.29.8"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

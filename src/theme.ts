@@ -62,6 +62,8 @@ function apply(): void {
 
   // 페이지 배경 매칭용 (styles.css).
   document.documentElement.setAttribute('data-mdview-theme', effective);
+  // form-js 블록 등 외부 위젯의 테마 감지용 표준 속성.
+  document.body.setAttribute('data-theme', effective);
 
   if (onChangeCb) {
     onChangeCb(effective);

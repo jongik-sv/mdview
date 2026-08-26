@@ -11,6 +11,7 @@ import mermaid from 'mermaid';
 import 'katex/dist/katex.min.css';
 import sample from './fixtures/sample.md?raw';
 import { renderMarkdown } from './render';
+import { renderAllFormJs } from './formjs';
 import {
   initTheme,
   setMode,
@@ -180,6 +181,7 @@ interface Tab {
   title: string;
   content: string;
   blocks: string[];
+  formBlocks: string[];
   scrollY: number;
   mtime?: number;
 }
@@ -1470,12 +1472,14 @@ async function renderActive(): Promise<void> {
   }
   const tab = findTab(activePath);
   if (!tab) return;
-  const { html, blocks } = renderMarkdown(tab.content);
+  const { html, blocks, formBlocks } = renderMarkdown(tab.content);
   content.innerHTML = html;
   rewriteAssetSrcs(content);
   tab.blocks = blocks;
+  tab.formBlocks = formBlocks;
   applyFontSize();
   await renderAllMermaid(blocks, effectiveTheme === 'dark' ? 'dark' : 'default');
+  await renderAllFormJs(formBlocks);
   // Restore scroll AFTER mermaid (mermaid changes document height)
   window.scrollTo(0, tab.scrollY);
   // Re-run search (or clear) now that #content has new nodes.
@@ -1487,7 +1491,7 @@ function _addTab(path: string, tabContent: string): Tab {
   if (existing) return existing;
   // basename: split on BOTH separators — Windows paths use `\`, POSIX uses `/`.
   const title = path.split(/[/\\]/).pop() || path;
-  const tab: Tab = { path, title, content: tabContent, blocks: [], scrollY: 0, mtime: 0 };
+  const tab: Tab = { path, title, content: tabContent, blocks: [], formBlocks: [], scrollY: 0, mtime: 0 };
   tabs.push(tab);
   renderTabBar();
   return tab;

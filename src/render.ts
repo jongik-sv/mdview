@@ -22,7 +22,11 @@ export function slugify(text: string): string {
  * placeholder <div class="mermaid-block" data-mermaid-idx="i"> that main.ts
  * later fills with the rendered SVG.
  */
-export function renderMarkdown(src: string): { html: string; blocks: string[] } {
+export function renderMarkdown(src: string): {
+  html: string;
+  blocks: string[];
+  formBlocks: string[];
+} {
   const md = new MarkdownIt({
     html: true,
     linkify: true,
@@ -50,6 +54,7 @@ export function renderMarkdown(src: string): { html: string; blocks: string[] } 
   });
 
   const blocks: string[] = [];
+  const formBlocks: string[] = [];
   const defaultFence = md.renderer.rules.fence!.bind(md.renderer.rules);
   md.renderer.rules.fence = (tokens, idx, options, env, self) => {
     const info = tokens[idx].info.trim().split(/\s+/)[0];
@@ -59,8 +64,14 @@ export function renderMarkdown(src: string): { html: string; blocks: string[] } 
       blocks.push(tokens[idx].content);
       return `<div class="mermaid-block" data-mermaid-idx="${i}"></div>`;
     }
+    if (info === 'form-js') {
+      const i = formBlocks.length;
+      // RAW JSON — main.ts의 renderAllFormJs가 파싱·마운트
+      formBlocks.push(tokens[idx].content);
+      return `<div class="form-js-block" data-formjs-idx="${i}"></div>`;
+    }
     return defaultFence(tokens, idx, options, env, self);
   };
 
-  return { html: md.render(src), blocks };
+  return { html: md.render(src), blocks, formBlocks };
 }
