@@ -13,11 +13,11 @@
   "dependencies": {
     "@bpmn-io/form-js-editor": "^1.25.0",
     "@bpmn-io/form-js-viewer": "^1.25.0",
-    "@form-js-designer/designer-components": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-components",
-    "@form-js-designer/designer-core": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-core",
-    "@form-js-designer/designer-editor-host": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-editor-host",
-    "@form-js-designer/designer-i18n": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-i18n",
-    "@form-js-designer/designer-runtime": "link:/Users/jji/project/form-js-designer-simple-props/packages/designer-runtime",
+    "@form-js-designer/designer-components": "file:vendor/form-js-designer-designer-components-0.0.0.tgz",
+    "@form-js-designer/designer-core": "file:vendor/form-js-designer-designer-core-0.0.0.tgz",
+    "@form-js-designer/designer-editor-host": "file:vendor/form-js-designer-designer-editor-host-0.1.0.tgz",
+    "@form-js-designer/designer-i18n": "file:vendor/form-js-designer-designer-i18n-0.0.0.tgz",
+    "@form-js-designer/designer-runtime": "file:vendor/form-js-designer-designer-runtime-0.0.0.tgz",
     "@tauri-apps/api": "^2",
     "@tauri-apps/plugin-clipboard-manager": "^2.3.2",
     "@tauri-apps/plugin-dialog": "^2.7.1",
@@ -39,5 +39,14 @@
     "@types/markdown-it": "^14.1.2",
     "typescript": "~5.6.2",
     "vite": "^6.0.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "@form-js-designer/designer-core": "file:./vendor/form-js-designer-designer-core-0.0.0.tgz",
+      "@form-js-designer/designer-components": "file:./vendor/form-js-designer-designer-components-0.0.0.tgz",
+      "@form-js-designer/designer-runtime": "file:./vendor/form-js-designer-designer-runtime-0.0.0.tgz",
+      "@form-js-designer/designer-editor-host": "file:./vendor/form-js-designer-designer-editor-host-0.1.0.tgz",
+      "@form-js-designer/designer-i18n": "file:./vendor/form-js-designer-designer-i18n-0.0.0.tgz"
+    }
   }
 }
