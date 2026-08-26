@@ -16,19 +16,19 @@ importers:
         version: 1.25.0
       '@form-js-designer/designer-components':
         specifier: link:/Users/jji/project/form-js-designer-simple-props/packages/designer-components
-        version: link:../../../../form-js-designer-simple-props/packages/designer-components
+        version: link:../form-js-designer-simple-props/packages/designer-components
       '@form-js-designer/designer-core':
         specifier: link:/Users/jji/project/form-js-designer-simple-props/packages/designer-core
-        version: link:../../../../form-js-designer-simple-props/packages/designer-core
+        version: link:../form-js-designer-simple-props/packages/designer-core
       '@form-js-designer/designer-editor-host':
         specifier: link:/Users/jji/project/form-js-designer-simple-props/packages/designer-editor-host
-        version: link:../../../../form-js-designer-simple-props/packages/designer-editor-host
+        version: link:../form-js-designer-simple-props/packages/designer-editor-host
       '@form-js-designer/designer-i18n':
         specifier: link:/Users/jji/project/form-js-designer-simple-props/packages/designer-i18n
-        version: link:../../../../form-js-designer-simple-props/packages/designer-i18n
+        version: link:../form-js-designer-simple-props/packages/designer-i18n
       '@form-js-designer/designer-runtime':
         specifier: link:/Users/jji/project/form-js-designer-simple-props/packages/designer-runtime
-        version: link:../../../../form-js-designer-simple-props/packages/designer-runtime
+        version: link:../form-js-designer-simple-props/packages/designer-runtime
       '@tauri-apps/api':
         specifier: ^2
         version: 2.11.1
