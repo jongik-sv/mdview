@@ -976,9 +976,11 @@ async function copyPathToClipboard(path: string): Promise<void> {
 // ── Recent files & folders ────────────────────────────────────────────────────
 // Persist the most-recently-opened paths in localStorage (most-recent first,
 // deduped, capped). Only meaningful under Tauri where paths are real files.
-// 파일과 폴더(프로젝트)가 한 목록·한 상한을 공유한다. 경로가 겹칠 수 없으므로
-// dedup/삭제는 path 단독 비교로 충분하다.
+// 파일과 폴더(프로젝트)가 한 목록에 저장되지만 상한은 종류별로 따로 적용한다 —
+// 상한을 공유하면 파일을 10개만 열어도 폴더 기록이 전부 밀려나 사라진다.
+// 경로가 겹칠 수 없으므로 dedup/삭제는 path 단독 비교로 충분하다.
 const RECENTS_KEY = 'mdview-recents';
+/** 종류(파일/폴더)별 최대 보관 개수 */
 const RECENTS_MAX = 10;
 
 type RecentKind = 'file' | 'folder';
@@ -1008,7 +1010,10 @@ function loadRecents(): RecentEntry[] {
 }
 
 function saveRecents(list: RecentEntry[]): void {
-  localStorage.setItem(RECENTS_KEY, JSON.stringify(list.slice(0, RECENTS_MAX)));
+  // 종류별로 최신 RECENTS_MAX개만 남기되, 목록 전체의 최신순은 그대로 유지한다.
+  const counts: Record<RecentKind, number> = { file: 0, folder: 0 };
+  const kept = list.filter((e) => counts[e.kind]++ < RECENTS_MAX);
+  localStorage.setItem(RECENTS_KEY, JSON.stringify(kept));
   renderHistory(); // 기록 변경의 단일 경로 — 목록 UI도 여기서 항상 동기화
 }
 
@@ -1028,8 +1033,8 @@ function removeRecent(path: string): void {
 }
 
 // ── 히스토리 (사이드바 트리/검색 아래 최근 연 파일/폴더 목록) ────────────────
-// 저장소는 하나(mdview-recents)이고 탭이 kind 필터 역할만 한다 — 상한·최신순은
-// 파일/폴더가 계속 공유한다.
+// 저장소는 하나(mdview-recents)이고 탭이 kind 필터 역할만 한다 — 최신순은
+// 공유하지만 상한(RECENTS_MAX)은 종류별로 따로 적용된다.
 const historyList = document.querySelector<HTMLElement>('#history-list')!;
 const historyClear = document.querySelector<HTMLButtonElement>('#history-clear')!;
 const historyTabs = document.querySelectorAll<HTMLButtonElement>('#history-tabs .history-tab');
