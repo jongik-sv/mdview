@@ -130,8 +130,8 @@ fn unwatch_file(path: String, state: tauri::State<AppState>) {
     state.watchers.lock().unwrap().remove(&path);
 }
 
-/// A node in the lazy project file tree (`scan_dir`). Files are markdown or
-/// BPMN (see `is_viewable_name`); directories always appear (their children
+/// A node in the lazy project file tree (`scan_dir`). Files are markdown,
+/// BPMN or form-js (see `is_viewable_name`); directories always appear (their children
 /// are fetched lazily, one level at a time, so a directory shows up before we
 /// know whether any viewable file lives below it).
 #[derive(Clone, Serialize)]
@@ -154,11 +154,14 @@ const SCAN_DIR_MAX_ENTRIES: usize = 5_000;
 
 fn is_viewable_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".bpmn")
+    lower.ends_with(".md")
+        || lower.ends_with(".markdown")
+        || lower.ends_with(".bpmn")
+        || lower.ends_with(".form")
 }
 
 /// `.md`/`.markdown` only — used by `search_dir`'s file walk, which (unlike
-/// the project tree) does not search inside `.bpmn` XML content.
+/// the project tree) does not search inside `.bpmn` XML or `.form` JSON content.
 fn is_markdown_source_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.ends_with(".md") || lower.ends_with(".markdown")
@@ -169,7 +172,7 @@ fn cmp_tree_name(a: &TreeNode, b: &TreeNode) -> std::cmp::Ordering {
 }
 
 /// List ONE level of `dir` for the lazy project tree: viewable files (`.md`,
-/// `.markdown`, `.bpmn`) plus all subdirectories (no recursive pruning — that
+/// `.markdown`, `.bpmn`, `.form`) plus all subdirectories (no recursive pruning — that
 /// would defeat lazy loading, so directories with no viewable file below them
 /// do appear). Errs when `dir` is not a directory — the frontend drop handler
 /// relies on this to tell folders from stray non-viewable files. Dotfiles,
@@ -214,7 +217,7 @@ fn scan_dir_inner(dir: String, max_entries: usize, show_hidden: bool) -> Result<
         }
         let is_dir = ft.is_dir();
         // Skip non-collectible entries (non-viewable files) BEFORE the cap
-        // check: only directories and viewable files (md/bpmn) count.
+        // check: only directories and viewable files (md/bpmn/form) count.
         // Otherwise a trailing dotfile/`.txt` on an otherwise-complete listing
         // would flip `truncated`.
         if !is_dir && !is_viewable_name(&name) {
@@ -341,8 +344,8 @@ fn scan_dir_deep_inner(
     Ok(prune_deep(dirs, truncated))
 }
 
-/// Drop directories whose scanned subtree contains no viewable file (md or
-/// bpmn). Computed bottom-up over the BFS list (children come after parents,
+/// Drop directories whose scanned subtree contains no viewable file (md,
+/// bpmn or form). Computed bottom-up over the BFS list (children come after parents,
 /// so a reverse pass sees every child's verdict first). A child dir that was
 /// never scanned (beyond the truncation frontier or vanished mid-scan) is
 /// UNKNOWN and kept — pruning must never hide a directory it didn't examine.
@@ -350,7 +353,7 @@ fn scan_dir_deep_inner(
 /// explicitly.
 fn prune_deep(dirs: Vec<DeepDir>, truncated: bool) -> DeepScanResult {
     // path → "subtree has a viewable file". Files in `children` are already
-    // viewable-only (md/bpmn).
+    // viewable-only (md/bpmn/form).
     let mut has_md: HashMap<String, bool> = HashMap::with_capacity(dirs.len());
     for d in dirs.iter().rev() {
         let keep = d
@@ -1136,6 +1139,17 @@ mod tests {
         let res = scan(t.path());
         let names: Vec<_> = res.children.iter().map(|n| n.name.as_str()).collect();
         assert_eq!(names, vec!["diagram.bpmn", "note.md"]); // 이름순, .txt는 제외
+    }
+
+    #[test]
+    fn scan_dir_includes_form_files() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("note.md"));
+        touch(&t.path().join("survey.form"));
+        touch(&t.path().join("skip.txt"));
+        let res = scan(t.path());
+        let names: Vec<_> = res.children.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["note.md", "survey.form"]);
     }
 
     #[test]

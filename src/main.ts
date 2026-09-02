@@ -149,7 +149,7 @@ content.addEventListener('click', (e) => {
   // Relative path within the document tree.
   const resolved = resolveRelative(activePath, href);
   if (!resolved) return;
-  if (/\.(md|markdown)$/i.test(resolved)) {
+  if (/\.(md|markdown|form)$/i.test(resolved)) {
     openTabFromPath(resolved).catch((err) => {
       console.error('openTabFromPath failed:', resolved, err);
       toast(`파일 열기 실패: ${err}`);
@@ -762,7 +762,7 @@ async function exportPdf(destOverride?: string): Promise<void> {
   if (!tab) return;
   let dest = destOverride ?? null;
   if (dest === null) {
-    const defaultName = tab.title.replace(/\.(md|markdown)$/i, '') + '.pdf';
+    const defaultName = tab.title.replace(/\.(md|markdown|form)$/i, '') + '.pdf';
     const sep = activePath.includes('\\') ? '\\' : '/';
     const dir = activePath.slice(0, activePath.lastIndexOf(sep));
     dest = await save({
@@ -1472,6 +1472,17 @@ async function renderActive(): Promise<void> {
   }
   const tab = findTab(activePath);
   if (!tab) return;
+  if (/\.form$/i.test(tab.path)) {
+    // .form 파일: 내용 전체가 form-js 스키마 JSON — 뷰어 블록 하나로 마운트.
+    content.innerHTML = '<div class="form-js-block" data-formjs-idx="0"></div>';
+    tab.blocks = [];
+    tab.formBlocks = [tab.content];
+    applyFontSize();
+    await renderAllFormJs(tab.formBlocks);
+    window.scrollTo(0, tab.scrollY);
+    refreshSearchAfterRenderedRender();
+    return;
+  }
   const { html, blocks, formBlocks } = renderMarkdown(tab.content);
   content.innerHTML = html;
   rewriteAssetSrcs(content);
@@ -1695,7 +1706,7 @@ async function reloadTab(path: string): Promise<void> {
 }
 
 async function openTabFromPath(path: string): Promise<void> {
-  if (!/\.(md|markdown)$/i.test(path)) return;
+  if (!/\.(md|markdown|form)$/i.test(path)) return;
   const existing = findTab(path);
   if (existing) {
     pushRecent(path);
@@ -1723,6 +1734,9 @@ const SVG_EXTERNAL =
   '<svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3H3.6A1.6 1.6 0 0 0 2 4.6v7.8A1.6 1.6 0 0 0 3.6 14h7.8a1.6 1.6 0 0 0 1.6-1.6V9"/><path d="M9.8 2.2H14v4.2"/><path d="M14 2.2 7.8 8.4"/></svg>';
 // 원(시작 이벤트)-사각형(태스크)-원(종료 이벤트) — BPMN 표기법을 참고한 파일 아이콘.
 // 폴더/파일 아이콘과 동일하게 currentColor 선화 스타일로 통일.
+// 입력 필드 두 개가 쌓인 폼 모양 — form-js(.form) 파일 아이콘.
+const SVG_FORM =
+  '<svg width="15" height="15" viewBox="0 0 16 16"><rect x="2" y="3" width="12" height="4.2" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4 5.1h4" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><rect x="2" y="9" width="12" height="4.2" rx="1" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4 11.1h6" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></svg>';
 const SVG_BPMN =
   '<svg width="15" height="15" viewBox="0 0 16 16"><circle cx="2.6" cy="8" r="1.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4.1 8h2.3" fill="none" stroke="currentColor" stroke-width="1.1"/><rect x="6.6" y="5.7" width="4.3" height="4.6" rx="0.9" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M10.9 8h2.1" fill="none" stroke="currentColor" stroke-width="1.1"/><circle cx="13.5" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
 
@@ -2067,7 +2081,7 @@ function renderTree(): void {
   if (!rootChildren || rootChildren.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'tree-empty';
-    empty.textContent = 'md/bpmn 파일 없음';
+    empty.textContent = 'md/bpmn/form 파일 없음';
     treeEl.appendChild(empty);
     return;
   }
@@ -2148,7 +2162,7 @@ function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
           emptyWrap.className = 'tree-children';
           const empty = document.createElement('div');
           empty.className = 'tree-empty';
-          empty.textContent = 'md/bpmn 파일 없음';
+          empty.textContent = 'md/bpmn/form 파일 없음';
           emptyWrap.appendChild(empty);
           wrap.appendChild(emptyWrap);
         }
@@ -2161,6 +2175,11 @@ function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
           console.error('openPath failed:', n.path, err);
           toast(`열기 실패: ${err}`);
         });
+      });
+    } else if (/\.form$/i.test(n.path)) {
+      icon.innerHTML = SVG_FORM;
+      row.addEventListener('click', () => {
+        void openTabFromPath(n.path);
       });
     } else {
       icon.innerHTML = SVG_FILE;
@@ -2615,7 +2634,7 @@ async function startTauri(): Promise<void> {
   getCurrentWebview().onDragDropEvent((event) => {
     if (event.payload.type === 'drop') {
       for (const p of event.payload.paths) {
-        if (/\.(md|markdown)$/i.test(p)) {
+        if (/\.(md|markdown|form)$/i.test(p)) {
           void openTabFromPath(p);
         } else if (/\.bpmn$/i.test(p)) {
           openPath(p).catch((err) => {
@@ -2635,7 +2654,7 @@ async function startTauri(): Promise<void> {
   btnOpen.addEventListener('click', async () => {
     const sel = await open({
       multiple: true,
-      filters: [{ name: 'Markdown', extensions: ['md', 'markdown'] }],
+      filters: [{ name: 'Markdown / Form', extensions: ['md', 'markdown', 'form'] }],
     });
     if (sel === null) return;
     const paths = Array.isArray(sel) ? sel : [sel];
