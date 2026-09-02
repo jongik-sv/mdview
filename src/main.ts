@@ -1764,8 +1764,12 @@ const treeEl = document.querySelector<HTMLElement>('#tree')!;
 const btnTree = document.querySelector<HTMLButtonElement>('#btn-tree')!;
 const sidebarOpenFolder = document.querySelector<HTMLButtonElement>('#sidebar-open-folder')!;
 const btnReveal = document.querySelector<HTMLButtonElement>('#btn-reveal')!;
+const btnHidden = document.querySelector<HTMLButtonElement>('#btn-hidden')!;
 
 const PROJECT_KEY = 'mdview-project';
+// 숨김(.으로 시작) 항목 표시 여부 — 트리 스캔·전체 펼치기·검색에 함께 적용된다.
+const SHOW_HIDDEN_KEY = 'mdview-show-hidden';
+let showHidden = localStorage.getItem(SHOW_HIDDEN_KEY) === '1';
 const SIDEBAR_HIDDEN_KEY = 'mdview-sidebar-hidden';
 let projectRoot: string | null = null;
 const expandedPaths = new Set<string>();
@@ -1778,7 +1782,7 @@ const loadedChildren = new Map<string, TreeNode[]>();
 let treeRefreshSeq = 0;
 
 async function scanDir(dir: string): Promise<ScanDirResult> {
-  return await invoke<ScanDirResult>('scan_dir', { dir });
+  return await invoke<ScanDirResult>('scan_dir', { dir, showHidden });
 }
 
 /// 사이드바만 숨긴다 — 프로젝트·watcher는 유지되어 트리는 계속 갱신된다.
@@ -1999,7 +2003,7 @@ async function expandDirDeep(path: string, retried = false): Promise<void> {
   const seq = ++treeRefreshSeq;
   let res: DeepScanResult;
   try {
-    res = await invoke<DeepScanResult>('scan_dir_deep', { dir: path });
+    res = await invoke<DeepScanResult>('scan_dir_deep', { dir: path, showHidden });
   } catch {
     if (seq !== treeRefreshSeq || !projectRoot) return;
     // dir 자체가 사라짐 — 부모까지 정리되도록 전체 갱신.
@@ -2262,6 +2266,18 @@ function flashTreeRow(path: string): void {
 
 btnReveal.addEventListener('click', () => void revealActiveInTree());
 
+// 숨김 항목 표시 토글 — 상태를 저장하고 트리를 다시 스캔하며, 열려 있던
+// 검색 결과도 새 기준으로 다시 실행한다.
+btnHidden.classList.toggle('active', showHidden);
+btnHidden.addEventListener('click', () => {
+  showHidden = !showHidden;
+  if (showHidden) localStorage.setItem(SHOW_HIDDEN_KEY, '1');
+  else localStorage.removeItem(SHOW_HIDDEN_KEY);
+  btnHidden.classList.toggle('active', showHidden);
+  if (projectRoot) void refreshTree();
+  void runPanelSearch();
+});
+
 // ☰ 하나로 통합: 프로젝트 없으면 폴더 선택, 있으면 트리 토글.
 btnTree.addEventListener('click', async () => {
   if (projectRoot) {
@@ -2469,7 +2485,7 @@ async function runPanelSearch(): Promise<void> {
   spStatus.textContent = '검색 중…';
   let res: SearchResult;
   try {
-    res = await invoke<SearchResult>('search_dir', { root: scope, query: q });
+    res = await invoke<SearchResult>('search_dir', { root: scope, query: q, showHidden });
   } catch (e) {
     if (seq !== spSeq || spScope !== scope) return;
     spStatus.textContent = '';

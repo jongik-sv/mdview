@@ -178,15 +178,15 @@ fn cmp_tree_name(a: &TreeNode, b: &TreeNode) -> std::cmp::Ordering {
 /// blocking thread: refreshes can fan this out over many expanded dirs at
 /// once, and a slow volume must not stall the main thread.
 #[tauri::command]
-async fn scan_dir(dir: String) -> Result<ScanDirResult, String> {
-    tauri::async_runtime::spawn_blocking(move || scan_dir_inner(dir, SCAN_DIR_MAX_ENTRIES))
+async fn scan_dir(dir: String, show_hidden: bool) -> Result<ScanDirResult, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_dir_inner(dir, SCAN_DIR_MAX_ENTRIES, show_hidden))
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// Cap-injectable core of `scan_dir` (tests pass a tiny `max_entries` to
 /// exercise the truncation boundary cheaply; the command uses the const).
-fn scan_dir_inner(dir: String, max_entries: usize) -> Result<ScanDirResult, String> {
+fn scan_dir_inner(dir: String, max_entries: usize, show_hidden: bool) -> Result<ScanDirResult, String> {
     let p = PathBuf::from(&dir);
     if !p.is_dir() {
         return Err(format!("not a directory: {dir}"));
@@ -205,7 +205,7 @@ fn scan_dir_inner(dir: String, max_entries: usize) -> Result<ScanDirResult, Stri
     let mut truncated = false;
     for entry in rd.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') || name == "node_modules" {
+        if (name.starts_with('.') && !show_hidden) || name == "node_modules" {
             continue;
         }
         let Ok(ft) = entry.file_type() else { continue };
@@ -284,13 +284,14 @@ const DEEP_SCAN_MAX_TOTAL_ENTRIES: usize = 100_000;
 /// `dir` itself is not a directory; subdirectories that vanish mid-scan are
 /// skipped silently.
 #[tauri::command]
-async fn scan_dir_deep(dir: String) -> Result<DeepScanResult, String> {
+async fn scan_dir_deep(dir: String, show_hidden: bool) -> Result<DeepScanResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         scan_dir_deep_inner(
             dir,
             DEEP_SCAN_MAX_DIRS,
             SCAN_DIR_MAX_ENTRIES,
             DEEP_SCAN_MAX_TOTAL_ENTRIES,
+            show_hidden,
         )
     })
     .await
@@ -305,6 +306,7 @@ fn scan_dir_deep_inner(
     max_dirs: usize,
     max_entries: usize,
     max_total_entries: usize,
+    show_hidden: bool,
 ) -> Result<DeepScanResult, String> {
     let mut dirs: Vec<DeepDir> = Vec::new();
     let mut truncated = false;
@@ -315,7 +317,7 @@ fn scan_dir_deep_inner(
             truncated = true;
             break;
         }
-        let res = match scan_dir_inner(d.clone(), max_entries) {
+        let res = match scan_dir_inner(d.clone(), max_entries, show_hidden) {
             Ok(r) => r,
             // Root not a directory → propagate (same contract as scan_dir);
             // a subdirectory that vanished between listing and scan → skip.
@@ -455,7 +457,7 @@ fn find_sub(haystack: &[char], needle: &[char]) -> Option<usize> {
 /// blocking I/O, so it is off-loaded via `spawn_blocking` (a synchronous walk
 /// here would freeze the macOS UI on a large tree).
 ///
-/// Same skip rules as `scan_dir` (dotfiles, `node_modules`, symlinks never
+/// Same skip rules as `scan_dir` (dotfiles unless `show_hidden`, `node_modules`, symlinks never
 /// followed, unreadable entries silently skipped); only markdown files are
 /// searched, and files larger than `SEARCH_MAX_FILE_BYTES` are skipped. A file
 /// is reported when its content matches and/or its name contains the needle.
@@ -463,16 +465,16 @@ fn find_sub(haystack: &[char], needle: &[char]) -> Option<usize> {
 /// name-sorted case-insensitively; the visit budgets (`SEARCH_MAX_*`) bound the
 /// work and set `truncated` when exceeded.
 #[tauri::command]
-async fn search_dir(root: String, query: String) -> Result<SearchResult, String> {
-    tauri::async_runtime::spawn_blocking(move || search_dir_sync(root, query))
+async fn search_dir(root: String, query: String, show_hidden: bool) -> Result<SearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || search_dir_sync(root, query, show_hidden))
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// Synchronous body of `search_dir` (also the direct entry point for tests),
 /// running the walk with the production caps.
-fn search_dir_sync(root: String, query: String) -> Result<SearchResult, String> {
-    search_dir_with_caps(root, query, SearchCaps::default())
+fn search_dir_sync(root: String, query: String, show_hidden: bool) -> Result<SearchResult, String> {
+    search_dir_with_caps(root, query, SearchCaps::default(), show_hidden)
 }
 
 /// Cap-injectable core: validate inputs, then walk `root` with `caps`.
@@ -480,6 +482,7 @@ fn search_dir_with_caps(
     root: String,
     query: String,
     caps: SearchCaps,
+    show_hidden: bool,
 ) -> Result<SearchResult, String> {
     let p = PathBuf::from(&root);
     if !p.is_dir() {
@@ -495,6 +498,7 @@ fn search_dir_with_caps(
     let mut searcher = Searcher {
         needle,
         caps,
+        show_hidden,
         result: SearchResult {
             files: Vec::new(),
             truncated: false,
@@ -511,6 +515,7 @@ fn search_dir_with_caps(
 struct Searcher {
     needle: Vec<char>,
     caps: SearchCaps,
+    show_hidden: bool,
     result: SearchResult,
     total_matches: usize,
     visited_files: usize,
@@ -537,7 +542,7 @@ impl Searcher {
         let mut files: Vec<(String, PathBuf)> = Vec::new();
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with('.') || name == "node_modules" {
+            if (name.starts_with('.') && !self.show_hidden) || name == "node_modules" {
                 continue;
             }
             let Ok(ft) = entry.file_type() else { continue };
@@ -1084,7 +1089,7 @@ mod tests {
     }
 
     fn scan(dir: &Path) -> ScanDirResult {
-        scan_dir_inner(dir.to_string_lossy().into_owned(), SCAN_DIR_MAX_ENTRIES).unwrap()
+        scan_dir_inner(dir.to_string_lossy().into_owned(), SCAN_DIR_MAX_ENTRIES, false).unwrap()
     }
 
     #[test]
@@ -1094,6 +1099,7 @@ mod tests {
         let res = scan_dir_inner(
             t.path().join("a.md").to_string_lossy().into_owned(),
             SCAN_DIR_MAX_ENTRIES,
+            false,
         );
         assert!(res.is_err());
     }
@@ -1145,6 +1151,36 @@ mod tests {
     }
 
     #[test]
+    fn scan_dir_show_hidden_includes_dot_entries_but_not_node_modules() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir(t.path().join(".git")).unwrap();
+        fs::create_dir(t.path().join("node_modules")).unwrap();
+        touch(&t.path().join(".hidden.md"));
+        touch(&t.path().join("real.md"));
+        let res = scan_dir_inner(
+            t.path().to_string_lossy().into_owned(),
+            SCAN_DIR_MAX_ENTRIES,
+            true,
+        )
+        .unwrap();
+        let names: Vec<_> = res.children.iter().map(|n| n.name.as_str()).collect();
+        // 폴더 우선(.git), 그다음 파일 이름순 — node_modules는 항상 제외.
+        assert_eq!(names, vec![".git", ".hidden.md", "real.md"]);
+    }
+
+    #[test]
+    fn search_dir_show_hidden_searches_dot_dirs() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir(t.path().join(".notes")).unwrap();
+        fs::write(t.path().join(".notes").join("a.md"), "needle here").unwrap();
+        let root = t.path().to_string_lossy().into_owned();
+        let hidden = search_dir_sync(root.clone(), "needle".into(), false).unwrap();
+        assert!(hidden.files.is_empty());
+        let shown = search_dir_sync(root, "needle".into(), true).unwrap();
+        assert_eq!(shown.files.len(), 1);
+    }
+
+    #[test]
     fn scan_dir_complete_listing_with_trailing_skippable_not_truncated() {
         // Exactly `max_entries` collectible entries plus a skippable dotfile
         // and a non-markdown file must NOT report truncated (finding 6: the cap
@@ -1154,7 +1190,7 @@ mod tests {
         touch(&t.path().join("b.md"));
         touch(&t.path().join(".hidden"));
         touch(&t.path().join("note.txt"));
-        let res = scan_dir_inner(t.path().to_string_lossy().into_owned(), 2).unwrap();
+        let res = scan_dir_inner(t.path().to_string_lossy().into_owned(), 2, false).unwrap();
         assert_eq!(res.children.len(), 2);
         assert!(!res.truncated);
     }
@@ -1165,7 +1201,7 @@ mod tests {
         touch(&t.path().join("a.md"));
         touch(&t.path().join("b.md"));
         touch(&t.path().join("c.md"));
-        let res = scan_dir_inner(t.path().to_string_lossy().into_owned(), 2).unwrap();
+        let res = scan_dir_inner(t.path().to_string_lossy().into_owned(), 2, false).unwrap();
         assert_eq!(res.children.len(), 2);
         assert!(res.truncated);
     }
@@ -1176,6 +1212,7 @@ mod tests {
             DEEP_SCAN_MAX_DIRS,
             SCAN_DIR_MAX_ENTRIES,
             DEEP_SCAN_MAX_TOTAL_ENTRIES,
+            false,
         )
         .unwrap()
     }
@@ -1186,6 +1223,7 @@ mod tests {
             max_dirs,
             SCAN_DIR_MAX_ENTRIES,
             max_total,
+            false,
         )
         .unwrap()
     }
@@ -1199,6 +1237,7 @@ mod tests {
             DEEP_SCAN_MAX_DIRS,
             SCAN_DIR_MAX_ENTRIES,
             DEEP_SCAN_MAX_TOTAL_ENTRIES,
+            false,
         );
         assert!(res.is_err());
     }
@@ -1340,6 +1379,7 @@ mod tests {
             DEEP_SCAN_MAX_DIRS,
             2,
             DEEP_SCAN_MAX_TOTAL_ENTRIES,
+            false,
         )
         .unwrap();
         assert!(res.truncated);
@@ -1347,11 +1387,11 @@ mod tests {
     }
 
     fn search(dir: &Path, q: &str) -> SearchResult {
-        search_dir_sync(dir.to_string_lossy().into_owned(), q.into()).unwrap()
+        search_dir_sync(dir.to_string_lossy().into_owned(), q.into(), false).unwrap()
     }
 
     fn search_capped(dir: &Path, q: &str, caps: SearchCaps) -> SearchResult {
-        search_dir_with_caps(dir.to_string_lossy().into_owned(), q.into(), caps).unwrap()
+        search_dir_with_caps(dir.to_string_lossy().into_owned(), q.into(), caps, false).unwrap()
     }
 
     #[test]
@@ -1361,6 +1401,7 @@ mod tests {
         let res = search_dir_sync(
             t.path().join("a.md").to_string_lossy().into_owned(),
             "x".into(),
+            false,
         );
         assert!(res.is_err());
     }
@@ -1369,8 +1410,8 @@ mod tests {
     fn search_dir_rejects_empty_or_whitespace_query() {
         let t = tempfile::tempdir().unwrap();
         let root = t.path().to_string_lossy().into_owned();
-        assert!(search_dir_sync(root.clone(), "".into()).is_err());
-        assert!(search_dir_sync(root, "   ".into()).is_err());
+        assert!(search_dir_sync(root.clone(), "".into(), false).is_err());
+        assert!(search_dir_sync(root, "   ".into(), false).is_err());
     }
 
     #[test]
