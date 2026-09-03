@@ -1148,7 +1148,7 @@ html[data-mdview-theme='dark'] :is(.sp-text, .sp-file-name) mark {
 }
 
 /* ── 히스토리 (최근 연 파일) — 트리/검색 아래 고정 섹션 ──────────────────
-   최대 RECENTS_MAX(10)개, 행 높이 24px 기준 max-height로 스크롤.
+   종류별 RECENTS_MAX(파일 30·폴더 10)개, 행 높이 24px 기준 max-height로 스크롤.
    행 모양/hover/active 색은 .tree-row 토큰을 따른다. */
 #history {
   flex-shrink: 0;

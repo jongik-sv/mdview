@@ -980,8 +980,8 @@ async function copyPathToClipboard(path: string): Promise<void> {
 // 상한을 공유하면 파일을 10개만 열어도 폴더 기록이 전부 밀려나 사라진다.
 // 경로가 겹칠 수 없으므로 dedup/삭제는 path 단독 비교로 충분하다.
 const RECENTS_KEY = 'mdview-recents';
-/** 종류(파일/폴더)별 최대 보관 개수 */
-const RECENTS_MAX = 10;
+/** 종류별 최대 보관 개수 — 파일은 자주 오가므로 넉넉히, 폴더는 적게. */
+const RECENTS_MAX: Record<RecentKind, number> = { file: 30, folder: 10 };
 
 type RecentKind = 'file' | 'folder';
 interface RecentEntry {
@@ -1010,9 +1010,9 @@ function loadRecents(): RecentEntry[] {
 }
 
 function saveRecents(list: RecentEntry[]): void {
-  // 종류별로 최신 RECENTS_MAX개만 남기되, 목록 전체의 최신순은 그대로 유지한다.
+  // 종류별로 최신 RECENTS_MAX[kind]개만 남기되, 목록 전체의 최신순은 그대로 유지한다.
   const counts: Record<RecentKind, number> = { file: 0, folder: 0 };
-  const kept = list.filter((e) => counts[e.kind]++ < RECENTS_MAX);
+  const kept = list.filter((e) => counts[e.kind]++ < RECENTS_MAX[e.kind]);
   localStorage.setItem(RECENTS_KEY, JSON.stringify(kept));
   renderHistory(); // 기록 변경의 단일 경로 — 목록 UI도 여기서 항상 동기화
 }
@@ -1044,7 +1044,7 @@ let historyTab: RecentKind =
   localStorage.getItem(HISTORY_TAB_KEY) === 'folder' ? 'folder' : 'file';
 
 /// 히스토리 목록 재구축. saveRecents(모든 기록 변경의 단일 경로)와
-/// renderTabBar(활성 파일 표시 갱신)가 호출한다. 항목 수는 RECENTS_MAX 이하.
+/// renderTabBar(활성 파일 표시 갱신)가 호출한다. 항목 수는 종류별 RECENTS_MAX 이하.
 function renderHistory(): void {
   // 전체 재구축이라 스크롤이 0으로 튄다 — 보던 위치 저장/복원 (renderTree와 동일).
   const scrollTop = historyList.scrollTop;
