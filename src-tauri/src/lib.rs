@@ -130,15 +130,22 @@ fn unwatch_file(path: String, state: tauri::State<AppState>) {
     state.watchers.lock().unwrap().remove(&path);
 }
 
-/// A node in the lazy project file tree (`scan_dir`). Files are markdown,
-/// BPMN or form-js (see `is_viewable_name`); directories always appear (their children
-/// are fetched lazily, one level at a time, so a directory shows up before we
-/// know whether any viewable file lives below it).
+/// A node in the lazy project file tree (`scan_dir`). With `show_all` off,
+/// files are markdown, BPMN or form-js (see `is_viewable_name`); with it on
+/// every file is listed. Directories always appear (their children are fetched
+/// lazily, one level at a time, so a directory shows up before we know whether
+/// any viewable file lives below it).
+///
+/// `viewable` is the single source of truth for "mdview can open this itself"
+/// — the frontend uses it to pick between an in-app tab and the OS default app,
+/// and to grey the row out. Directories are always `false`: they are expanded,
+/// not opened.
 #[derive(Clone, Serialize)]
 struct TreeNode {
     name: String,
     path: String,
     is_dir: bool,
+    viewable: bool,
 }
 
 /// Return value of `scan_dir`. `truncated` is set when the listing hit
@@ -175,21 +182,25 @@ fn cmp_tree_name(a: &TreeNode, b: &TreeNode) -> std::cmp::Ordering {
 /// `.markdown`, `.bpmn`, `.form`) plus all subdirectories (no recursive pruning — that
 /// would defeat lazy loading, so directories with no viewable file below them
 /// do appear). Errs when `dir` is not a directory — the frontend drop handler
-/// relies on this to tell folders from stray non-viewable files. Dotfiles,
-/// `node_modules` and symlinks are skipped; symlinks are never followed.
-/// Directories sort before files, each name-sorted case-insensitively. Async +
-/// blocking thread: refreshes can fan this out over many expanded dirs at
-/// once, and a slow volume must not stall the main thread.
+/// relies on this to tell folders from stray non-viewable files.
+///
+/// `show_all` is the sidebar's eye toggle and widens the listing on BOTH axes
+/// at once: dot-prefixed entries appear, and so do files mdview cannot render
+/// itself (those come back with `viewable: false` so the frontend can hand them
+/// to the OS default app). `node_modules` and symlinks are skipped either way;
+/// symlinks are never followed. Directories sort before files, each name-sorted
+/// case-insensitively. Async + blocking thread: refreshes can fan this out over
+/// many expanded dirs at once, and a slow volume must not stall the main thread.
 #[tauri::command]
-async fn scan_dir(dir: String, show_hidden: bool) -> Result<ScanDirResult, String> {
-    tauri::async_runtime::spawn_blocking(move || scan_dir_inner(dir, SCAN_DIR_MAX_ENTRIES, show_hidden))
+async fn scan_dir(dir: String, show_all: bool) -> Result<ScanDirResult, String> {
+    tauri::async_runtime::spawn_blocking(move || scan_dir_inner(dir, SCAN_DIR_MAX_ENTRIES, show_all))
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// Cap-injectable core of `scan_dir` (tests pass a tiny `max_entries` to
 /// exercise the truncation boundary cheaply; the command uses the const).
-fn scan_dir_inner(dir: String, max_entries: usize, show_hidden: bool) -> Result<ScanDirResult, String> {
+fn scan_dir_inner(dir: String, max_entries: usize, show_all: bool) -> Result<ScanDirResult, String> {
     let p = PathBuf::from(&dir);
     if !p.is_dir() {
         return Err(format!("not a directory: {dir}"));
@@ -208,7 +219,7 @@ fn scan_dir_inner(dir: String, max_entries: usize, show_hidden: bool) -> Result<
     let mut truncated = false;
     for entry in rd.flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        if (name.starts_with('.') && !show_hidden) || name == "node_modules" {
+        if (name.starts_with('.') && !show_all) || name == "node_modules" {
             continue;
         }
         let Ok(ft) = entry.file_type() else { continue };
@@ -216,11 +227,11 @@ fn scan_dir_inner(dir: String, max_entries: usize, show_hidden: bool) -> Result<
             continue;
         }
         let is_dir = ft.is_dir();
-        // Skip non-collectible entries (non-viewable files) BEFORE the cap
-        // check: only directories and viewable files (md/bpmn/form) count.
-        // Otherwise a trailing dotfile/`.txt` on an otherwise-complete listing
-        // would flip `truncated`.
-        if !is_dir && !is_viewable_name(&name) {
+        let viewable = !is_dir && is_viewable_name(&name);
+        // Skip non-collectible entries BEFORE the cap check: only entries that
+        // will actually be pushed count. Otherwise a trailing dotfile/`.txt` on
+        // an otherwise-complete listing would flip `truncated`.
+        if !is_dir && !viewable && !show_all {
             continue;
         }
         // Enforce the cap at PUSH time: truncate only when a collectible entry
@@ -235,12 +246,14 @@ fn scan_dir_inner(dir: String, max_entries: usize, show_hidden: bool) -> Result<
                 name,
                 path,
                 is_dir: true,
+                viewable: false,
             });
         } else {
             files.push(TreeNode {
                 name,
                 path,
                 is_dir: false,
+                viewable,
             });
         }
     }
@@ -287,14 +300,14 @@ const DEEP_SCAN_MAX_TOTAL_ENTRIES: usize = 100_000;
 /// `dir` itself is not a directory; subdirectories that vanish mid-scan are
 /// skipped silently.
 #[tauri::command]
-async fn scan_dir_deep(dir: String, show_hidden: bool) -> Result<DeepScanResult, String> {
+async fn scan_dir_deep(dir: String, show_all: bool) -> Result<DeepScanResult, String> {
     tauri::async_runtime::spawn_blocking(move || {
         scan_dir_deep_inner(
             dir,
             DEEP_SCAN_MAX_DIRS,
             SCAN_DIR_MAX_ENTRIES,
             DEEP_SCAN_MAX_TOTAL_ENTRIES,
-            show_hidden,
+            show_all,
         )
     })
     .await
@@ -309,7 +322,7 @@ fn scan_dir_deep_inner(
     max_dirs: usize,
     max_entries: usize,
     max_total_entries: usize,
-    show_hidden: bool,
+    show_all: bool,
 ) -> Result<DeepScanResult, String> {
     let mut dirs: Vec<DeepDir> = Vec::new();
     let mut truncated = false;
@@ -320,7 +333,7 @@ fn scan_dir_deep_inner(
             truncated = true;
             break;
         }
-        let res = match scan_dir_inner(d.clone(), max_entries, show_hidden) {
+        let res = match scan_dir_inner(d.clone(), max_entries, show_all) {
             Ok(r) => r,
             // Root not a directory → propagate (same contract as scan_dir);
             // a subdirectory that vanished between listing and scan → skip.
@@ -373,6 +386,97 @@ fn prune_deep(dirs: Vec<DeepDir>, truncated: bool) -> DeepScanResult {
         })
         .collect();
     DeepScanResult { dirs, truncated }
+}
+
+/// Resolve the directory a terminal should start in for `path`: the path
+/// itself when it is a directory, otherwise its parent. Errs when the path does
+/// not exist or has no parent (a bare root), so `open_terminal` never spawns a
+/// shell in an unexpected place.
+fn terminal_dir(path: &str) -> Result<PathBuf, String> {
+    let p = PathBuf::from(path);
+    if p.is_dir() {
+        return Ok(p);
+    }
+    if !p.exists() {
+        return Err(format!("path not found: {path}"));
+    }
+    p.parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("no parent directory: {path}"))
+}
+
+/// Open the OS terminal at `path` (its parent when `path` is a file) — the
+/// file-tree context menu's "터미널에서 열기".
+///
+/// The directory is passed as a process ARGUMENT, never interpolated into a
+/// shell command string, so a path containing spaces, quotes or `;` cannot turn
+/// into extra commands.
+#[tauri::command]
+async fn open_terminal(path: String) -> Result<(), String> {
+    let dir = terminal_dir(&path)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        {
+            std::process::Command::new("open")
+                .arg("-a")
+                .arg("Terminal")
+                .arg(&dir)
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+        #[cfg(target_os = "windows")]
+        {
+            // `cmd /C start "" /D <dir> cmd` — /D sets the working directory
+            // without a `cd` string, and the empty "" is start's title slot
+            // (otherwise a quoted directory would be taken as the title).
+            std::process::Command::new("cmd")
+                .arg("/C")
+                .arg("start")
+                .arg("")
+                .arg("/D")
+                .arg(&dir)
+                .arg("cmd")
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            // Try the common emulators in turn; report only if none launched.
+            for exe in ["x-terminal-emulator", "gnome-terminal", "konsole", "xterm"] {
+                if std::process::Command::new(exe)
+                    .current_dir(&dir)
+                    .spawn()
+                    .is_ok()
+                {
+                    return Ok(());
+                }
+            }
+            Err("no terminal emulator found".to_string())
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Which desktop the app is running on, so the frontend can label the reveal
+/// menu item "Finder에서 보기" or "탐색기에서 보기" without guessing from the
+/// WebView user agent.
+#[tauri::command]
+fn platform_name() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        "macos".to_string()
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "windows".to_string()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        "other".to_string()
+    }
 }
 
 /// One matching line inside a file (`search_dir`). `line` is 1-based.
@@ -460,24 +564,26 @@ fn find_sub(haystack: &[char], needle: &[char]) -> Option<usize> {
 /// blocking I/O, so it is off-loaded via `spawn_blocking` (a synchronous walk
 /// here would freeze the macOS UI on a large tree).
 ///
-/// Same skip rules as `scan_dir` (dotfiles unless `show_hidden`, `node_modules`, symlinks never
-/// followed, unreadable entries silently skipped); only markdown files are
-/// searched, and files larger than `SEARCH_MAX_FILE_BYTES` are skipped. A file
+/// Same skip rules as `scan_dir` (dotfiles unless `show_all`, `node_modules`, symlinks never
+/// followed, unreadable entries silently skipped). Here `show_all` widens only
+/// the dot-entry axis: the walk stays markdown-only regardless, because reading
+/// binaries (xlsx, images) would cost a great deal of I/O for matches that mean
+/// nothing. Files larger than `SEARCH_MAX_FILE_BYTES` are skipped. A file
 /// is reported when its content matches and/or its name contains the needle.
 /// Each directory is walked files-first then subdirectories, each group
 /// name-sorted case-insensitively; the visit budgets (`SEARCH_MAX_*`) bound the
 /// work and set `truncated` when exceeded.
 #[tauri::command]
-async fn search_dir(root: String, query: String, show_hidden: bool) -> Result<SearchResult, String> {
-    tauri::async_runtime::spawn_blocking(move || search_dir_sync(root, query, show_hidden))
+async fn search_dir(root: String, query: String, show_all: bool) -> Result<SearchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || search_dir_sync(root, query, show_all))
         .await
         .map_err(|e| e.to_string())?
 }
 
 /// Synchronous body of `search_dir` (also the direct entry point for tests),
 /// running the walk with the production caps.
-fn search_dir_sync(root: String, query: String, show_hidden: bool) -> Result<SearchResult, String> {
-    search_dir_with_caps(root, query, SearchCaps::default(), show_hidden)
+fn search_dir_sync(root: String, query: String, show_all: bool) -> Result<SearchResult, String> {
+    search_dir_with_caps(root, query, SearchCaps::default(), show_all)
 }
 
 /// Cap-injectable core: validate inputs, then walk `root` with `caps`.
@@ -485,7 +591,7 @@ fn search_dir_with_caps(
     root: String,
     query: String,
     caps: SearchCaps,
-    show_hidden: bool,
+    show_all: bool,
 ) -> Result<SearchResult, String> {
     let p = PathBuf::from(&root);
     if !p.is_dir() {
@@ -501,7 +607,7 @@ fn search_dir_with_caps(
     let mut searcher = Searcher {
         needle,
         caps,
-        show_hidden,
+        show_all,
         result: SearchResult {
             files: Vec::new(),
             truncated: false,
@@ -518,7 +624,7 @@ fn search_dir_with_caps(
 struct Searcher {
     needle: Vec<char>,
     caps: SearchCaps,
-    show_hidden: bool,
+    show_all: bool,
     result: SearchResult,
     total_matches: usize,
     visited_files: usize,
@@ -545,7 +651,7 @@ impl Searcher {
         let mut files: Vec<(String, PathBuf)> = Vec::new();
         for entry in rd.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if (name.starts_with('.') && !self.show_hidden) || name == "node_modules" {
+            if (name.starts_with('.') && !self.show_all) || name == "node_modules" {
                 continue;
             }
             let Ok(ft) = entry.file_type() else { continue };
@@ -1042,6 +1148,8 @@ pub fn run() {
             scan_dir,
             scan_dir_deep,
             search_dir,
+            open_terminal,
+            platform_name,
             watch_dir,
             unwatch_dir
         ])
@@ -1165,7 +1273,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_dir_show_hidden_includes_dot_entries_but_not_node_modules() {
+    fn scan_dir_show_all_includes_dot_entries_but_not_node_modules() {
         let t = tempfile::tempdir().unwrap();
         fs::create_dir(t.path().join(".git")).unwrap();
         fs::create_dir(t.path().join("node_modules")).unwrap();
@@ -1183,7 +1291,91 @@ mod tests {
     }
 
     #[test]
-    fn search_dir_show_hidden_searches_dot_dirs() {
+    fn scan_dir_show_all_includes_non_viewable_files() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("note.md"));
+        touch(&t.path().join("sheet.xlsx"));
+        touch(&t.path().join("readme.txt"));
+        fs::create_dir(t.path().join("node_modules")).unwrap();
+        let res = scan_dir_inner(
+            t.path().to_string_lossy().into_owned(),
+            SCAN_DIR_MAX_ENTRIES,
+            true,
+        )
+        .unwrap();
+        let names: Vec<_> = res.children.iter().map(|n| n.name.as_str()).collect();
+        // 이름순 — node_modules는 show_all이어도 항상 제외.
+        assert_eq!(names, vec!["note.md", "readme.txt", "sheet.xlsx"]);
+    }
+
+    #[test]
+    fn scan_dir_marks_viewable_flag_per_entry() {
+        let t = tempfile::tempdir().unwrap();
+        touch(&t.path().join("note.md"));
+        touch(&t.path().join("survey.form"));
+        touch(&t.path().join("sheet.xlsx"));
+        fs::create_dir(t.path().join("sub")).unwrap();
+        let res = scan_dir_inner(
+            t.path().to_string_lossy().into_owned(),
+            SCAN_DIR_MAX_ENTRIES,
+            true,
+        )
+        .unwrap();
+        let flags: Vec<_> = res
+            .children
+            .iter()
+            .map(|n| (n.name.as_str(), n.viewable))
+            .collect();
+        // 폴더는 viewable=false (여는 대상이 아니라 펼치는 대상).
+        assert_eq!(
+            flags,
+            vec![
+                ("sub", false),
+                ("note.md", true),
+                ("sheet.xlsx", false),
+                ("survey.form", true),
+            ]
+        );
+    }
+
+    #[test]
+    fn scan_dir_deep_show_all_keeps_dirs_holding_only_non_viewable_files() {
+        let t = tempfile::tempdir().unwrap();
+        fs::create_dir(t.path().join("sheets")).unwrap();
+        touch(&t.path().join("sheets").join("a.xlsx"));
+        let root = t.path().to_string_lossy().into_owned();
+        // show_all=false: md가 없는 하위 폴더는 가지치기로 사라진다.
+        let pruned = scan_dir_deep_inner(root.clone(), 64, 64, 512, false).unwrap();
+        assert!(pruned.dirs.iter().all(|d| !d.path.ends_with("sheets")));
+        // show_all=true: 모든 파일이 목록에 오르므로 폴더가 남는다.
+        let all = scan_dir_deep_inner(root, 64, 64, 512, true).unwrap();
+        assert!(all.dirs.iter().any(|d| d.path.ends_with("sheets")));
+    }
+
+    #[test]
+    fn terminal_dir_uses_parent_for_files_and_self_for_dirs() {
+        let t = tempfile::tempdir().unwrap();
+        let file = t.path().join("note.md");
+        touch(&file);
+        assert_eq!(
+            terminal_dir(&file.to_string_lossy()).unwrap(),
+            t.path().to_path_buf()
+        );
+        assert_eq!(
+            terminal_dir(&t.path().to_string_lossy()).unwrap(),
+            t.path().to_path_buf()
+        );
+    }
+
+    #[test]
+    fn terminal_dir_rejects_missing_path() {
+        let t = tempfile::tempdir().unwrap();
+        let missing = t.path().join("nope").join("gone.md");
+        assert!(terminal_dir(&missing.to_string_lossy()).is_err());
+    }
+
+    #[test]
+    fn search_dir_show_all_searches_dot_dirs() {
         let t = tempfile::tempdir().unwrap();
         fs::create_dir(t.path().join(".notes")).unwrap();
         fs::write(t.path().join(".notes").join("a.md"), "needle here").unwrap();

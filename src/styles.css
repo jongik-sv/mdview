@@ -964,6 +964,56 @@ html[data-mdview-theme='light'] .tree-dir .tree-icon { color: #54aeff; }
 html[data-mdview-theme='light'] .tree-file .tree-icon { color: #737e8a; }
 html[data-mdview-theme='dark'] .tree-dir .tree-icon { color: #6cb6ff; }
 html[data-mdview-theme='dark'] .tree-file .tree-icon { color: #8b949e; }
+
+/* 확장자별 아이콘 색. 모양만으로는 15px에서 구분이 어려워 색이 절반을
+   담당하므로, 두 테마 각각에서 배경 대비를 확보한 값을 따로 준다. */
+html[data-mdview-theme='light'] {
+  --ico-sheet: #1a7f37;
+  --ico-word: #0969da;
+  --ico-slide: #bc4c00;
+  --ico-pdf: #cf222e;
+  --ico-image: #8250df;
+  --ico-video: #bf3989;
+  --ico-audio: #1b7c83;
+  --ico-archive: #9a6700;
+  --ico-code: #0550ae;
+  --ico-data: #6639ba;
+}
+html[data-mdview-theme='dark'] {
+  --ico-sheet: #3fb950;
+  --ico-word: #58a6ff;
+  --ico-slide: #f0883e;
+  --ico-pdf: #ff7b72;
+  --ico-image: #d2a8ff;
+  --ico-video: #f778ba;
+  --ico-audio: #56d4dd;
+  --ico-archive: #e3b341;
+  --ico-code: #79c0ff;
+  --ico-data: #b083f0;
+}
+/* 위의 `html[테마] .tree-file .tree-icon` 회색 선언과 특이도를 맞춘다 —
+   같은 값이면 나중에 온 쪽이 이기므로 !important가 필요 없다. */
+html[data-mdview-theme] .tree-file .tree-icon--sheet { color: var(--ico-sheet); }
+html[data-mdview-theme] .tree-file .tree-icon--word { color: var(--ico-word); }
+html[data-mdview-theme] .tree-file .tree-icon--slide { color: var(--ico-slide); }
+html[data-mdview-theme] .tree-file .tree-icon--pdf { color: var(--ico-pdf); }
+html[data-mdview-theme] .tree-file .tree-icon--image { color: var(--ico-image); }
+html[data-mdview-theme] .tree-file .tree-icon--video { color: var(--ico-video); }
+html[data-mdview-theme] .tree-file .tree-icon--audio { color: var(--ico-audio); }
+html[data-mdview-theme] .tree-file .tree-icon--archive { color: var(--ico-archive); }
+html[data-mdview-theme] .tree-file .tree-icon--code { color: var(--ico-code); }
+html[data-mdview-theme] .tree-file .tree-icon--data { color: var(--ico-data); }
+
+/* mdview가 렌더하지 않는 파일 — 클릭하면 OS 기본 앱으로 열린다. 흐리게 두되
+   hover/active에서는 되돌려, 흐린 것이 "비활성"이 아니라 "종류가 다름"임을
+   드러낸다. */
+.tree-row--external {
+  opacity: 0.5;
+}
+.tree-row--external:hover,
+.tree-row--external.active {
+  opacity: 0.85;
+}
 .tree-empty {
   padding: 12px;
   opacity: 0.6;

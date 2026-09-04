@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { open, save, ask } from '@tauri-apps/plugin-dialog';
 import { check } from '@tauri-apps/plugin-updater';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { openUrl, openPath } from '@tauri-apps/plugin-opener';
+import { openUrl, openPath, revealItemInDir } from '@tauri-apps/plugin-opener';
 import { writeText as clipboardWriteText } from '@tauri-apps/plugin-clipboard-manager';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import mermaid from 'mermaid';
@@ -955,7 +955,59 @@ if (isTauri) {
   window.setInterval(() => void checkForUpdates(), 4 * 60 * 60 * 1000);
 }
 
-// ── Copy full path (탭 컨텍스트 메뉴 "경로 복사") ─────────────────────────────
+// ── OS 연동 (기본 앱 / 파일 관리자 / 터미널 / 경로 복사) ─────────────────────
+// 실행 중인 플랫폼. 파일 관리자 메뉴 항목의 이름을 고르는 데만 쓴다. WebView의
+// user agent를 파싱하는 대신 Rust에게 물어본다 (WKWebView와 WebView2가 서로
+// 다른 문자열을 주기 때문에 파싱은 깨지기 쉽다). 메뉴는 열릴 때마다 새로
+// 만들어지므로 이 값이 비동기로 채워져도 문제가 없다.
+let platformName = 'macos';
+if (isTauri) {
+  invoke<string>('platform_name')
+    .then((p) => {
+      platformName = p;
+    })
+    .catch(() => {
+      /* 값을 못 얻으면 기본값 그대로 — 라벨만 달라진다. */
+    });
+}
+
+/// 플랫폼별 파일 관리자 이름 (메뉴 라벨용).
+function fileManagerName(): string {
+  if (platformName === 'windows') return '탐색기';
+  if (platformName === 'macos') return 'Finder';
+  return '파일 관리자';
+}
+
+/// OS 기본 앱으로 연다 — mdview가 렌더하지 않는 종류의 파일에 쓴다.
+async function openWithDefaultApp(path: string): Promise<void> {
+  try {
+    await openPath(path);
+  } catch (err) {
+    console.error('openPath failed:', path, err);
+    toast(`열기 실패: ${err}`);
+  }
+}
+
+/// 파일 관리자에서 해당 항목을 선택된 상태로 보여준다.
+async function revealInFileManager(path: string): Promise<void> {
+  try {
+    await revealItemInDir(path);
+  } catch (err) {
+    console.error('revealItemInDir failed:', path, err);
+    toast(`${fileManagerName()}에서 열기 실패: ${err}`);
+  }
+}
+
+/// 해당 경로(파일이면 그 상위 폴더)에서 터미널을 연다.
+async function openInTerminal(path: string): Promise<void> {
+  try {
+    await invoke('open_terminal', { path });
+  } catch (err) {
+    console.error('open_terminal failed:', path, err);
+    toast(`터미널 열기 실패: ${err}`);
+  }
+}
+
 async function copyPathToClipboard(path: string): Promise<void> {
   try {
     // Under Tauri use the clipboard-manager plugin: navigator.clipboard.writeText
@@ -1745,10 +1797,199 @@ const SVG_FORM =
 const SVG_BPMN =
   '<svg width="15" height="15" viewBox="0 0 16 16"><circle cx="2.6" cy="8" r="1.5" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4.1 8h2.3" fill="none" stroke="currentColor" stroke-width="1.1"/><rect x="6.6" y="5.7" width="4.3" height="4.6" rx="0.9" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M10.9 8h2.1" fill="none" stroke="currentColor" stroke-width="1.1"/><circle cx="13.5" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
 
+// ── 확장자별 파일 아이콘 ─────────────────────────────────────────────────────
+// 외부 아이콘 패키지를 쓰지 않고 인라인 SVG로 둔다 (아이콘 테마 패키지는 수천
+// 개의 SVG를 통째로 끌고 와 배포본이 MB 단위로 커진다). 모양은 카테고리가,
+// 색은 `.tree-icon--<카테고리>` CSS 클래스가 담당한다.
+type FileIconKind =
+  | 'md'
+  | 'bpmn'
+  | 'form'
+  | 'sheet'
+  | 'word'
+  | 'slide'
+  | 'pdf'
+  | 'image'
+  | 'video'
+  | 'audio'
+  | 'archive'
+  | 'code'
+  | 'data'
+  | 'text'
+  | 'file';
+
+/// 모서리가 접힌 종이 — 확장자별 아이콘이 공유하는 바탕 도형.
+const DOC_OUTLINE =
+  '<path d="M3.75 1.75h5.5l3 3v9a.75.75 0 0 1-.75.75h-7.75a.75.75 0 0 1-.75-.75v-11.25a.75.75 0 0 1 .75-.75z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>';
+
+/// 문서 바탕 위에 `inner` 글리프를 얹은 15px 아이콘을 만든다.
+function docIcon(inner: string): string {
+  return `<svg width="15" height="15" viewBox="0 0 16 16">${DOC_OUTLINE}${inner}</svg>`;
+}
+
+const FILE_ICON_SVG: Record<FileIconKind, string> = {
+  md: SVG_FILE,
+  bpmn: SVG_BPMN,
+  form: SVG_FORM,
+  // 표 격자 — 스프레드시트.
+  sheet: docIcon(
+    '<rect x="4.4" y="7.7" width="7.2" height="4.9" rx="0.5" fill="none" stroke="currentColor" stroke-width="1"/><path d="M4.4 10.15h7.2M8 7.7v4.9" stroke="currentColor" stroke-width="1"/>',
+  ),
+  // 문단 줄 — 워드프로세서 문서.
+  word: docIcon(
+    '<path d="M4.8 8.3h6.4M4.8 10.4h6.4M4.8 12.5h4.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>',
+  ),
+  // 막대가 선 화면 — 프레젠테이션.
+  slide: docIcon(
+    '<rect x="4.4" y="7.8" width="7.2" height="4.8" rx="0.6" fill="none" stroke="currentColor" stroke-width="1"/><path d="M6.1 11.5V9.7M8 11.5V8.7M9.9 11.5v-1.3" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>',
+  ),
+  // 채워진 띠 — PDF (적색과 함께 읽힌다).
+  pdf: docIcon('<rect x="3.3" y="8.5" width="9.4" height="3.7" rx="0.8" fill="currentColor"/>'),
+  // 해와 능선 — 이미지.
+  image: docIcon(
+    '<circle cx="6.1" cy="8.4" r="1" fill="currentColor"/><path d="M4.3 12.6l2.4-2.9 1.5 1.8 1.3-1.5 2.2 2.6z" fill="currentColor"/>',
+  ),
+  // 재생 삼각형 — 동영상.
+  video: docIcon('<path d="M6.4 8.1l4.2 2.7-4.2 2.7z" fill="currentColor"/>'),
+  // 음표 — 오디오.
+  audio: docIcon(
+    '<path d="M10.5 7.6v4.3" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/><path d="M10.5 7.6l1.4.5" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/><circle cx="9.2" cy="11.9" r="1.3" fill="currentColor"/>',
+  ),
+  // 지퍼 — 압축 파일.
+  archive: docIcon(
+    '<path d="M8 5.4v1.3M8 7.7v1.3M8 10v1.3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><rect x="6.85" y="11.3" width="2.3" height="2.3" rx="0.6" fill="none" stroke="currentColor" stroke-width="1"/>',
+  ),
+  // 꺾쇠 — 소스 코드.
+  code: docIcon(
+    '<path d="M6.6 8.5L4.9 10.4l1.7 1.9M9.4 8.5l1.7 1.9-1.7 1.9" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round" stroke-linejoin="round"/>',
+  ),
+  // 중괄호 — 구조화된 데이터.
+  data: docIcon(
+    '<path d="M6.8 7.9c-1 0-1 1.2-1 1.7s0 1.1-.8 1.1c.8 0 .8.6.8 1.1s0 1.7 1 1.7M9.2 7.9c1 0 1 1.2 1 1.7s0 1.1.8 1.1c-.8 0-.8.6-.8 1.1s0 1.7-1 1.7" fill="none" stroke="currentColor" stroke-width="1.05" stroke-linecap="round"/>',
+  ),
+  // 가는 줄 — 서식 없는 텍스트.
+  text: docIcon(
+    '<path d="M4.9 8.5h6.2M4.9 10.5h6.2M4.9 12.5h3.4" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>',
+  ),
+  file: docIcon(''),
+};
+
+const FILE_ICON_BY_EXT: Record<string, FileIconKind> = {
+  md: 'md',
+  markdown: 'md',
+  bpmn: 'bpmn',
+  form: 'form',
+  xls: 'sheet',
+  xlsx: 'sheet',
+  xlsm: 'sheet',
+  ods: 'sheet',
+  numbers: 'sheet',
+  csv: 'sheet',
+  tsv: 'sheet',
+  doc: 'word',
+  docx: 'word',
+  odt: 'word',
+  rtf: 'word',
+  hwp: 'word',
+  hwpx: 'word',
+  pages: 'word',
+  ppt: 'slide',
+  pptx: 'slide',
+  odp: 'slide',
+  key: 'slide',
+  pdf: 'pdf',
+  png: 'image',
+  jpg: 'image',
+  jpeg: 'image',
+  gif: 'image',
+  bmp: 'image',
+  webp: 'image',
+  svg: 'image',
+  ico: 'image',
+  heic: 'image',
+  tif: 'image',
+  tiff: 'image',
+  psd: 'image',
+  mp4: 'video',
+  mov: 'video',
+  avi: 'video',
+  mkv: 'video',
+  webm: 'video',
+  wmv: 'video',
+  m4v: 'video',
+  mp3: 'audio',
+  wav: 'audio',
+  flac: 'audio',
+  aac: 'audio',
+  ogg: 'audio',
+  m4a: 'audio',
+  zip: 'archive',
+  tar: 'archive',
+  gz: 'archive',
+  tgz: 'archive',
+  bz2: 'archive',
+  xz: 'archive',
+  '7z': 'archive',
+  rar: 'archive',
+  js: 'code',
+  mjs: 'code',
+  cjs: 'code',
+  jsx: 'code',
+  ts: 'code',
+  tsx: 'code',
+  py: 'code',
+  rs: 'code',
+  go: 'code',
+  java: 'code',
+  kt: 'code',
+  swift: 'code',
+  c: 'code',
+  h: 'code',
+  cpp: 'code',
+  hpp: 'code',
+  cs: 'code',
+  rb: 'code',
+  php: 'code',
+  sh: 'code',
+  bash: 'code',
+  zsh: 'code',
+  ps1: 'code',
+  sql: 'code',
+  html: 'code',
+  htm: 'code',
+  css: 'code',
+  scss: 'code',
+  vue: 'code',
+  json: 'data',
+  jsonc: 'data',
+  yaml: 'data',
+  yml: 'data',
+  toml: 'data',
+  xml: 'data',
+  ini: 'data',
+  env: 'data',
+  lock: 'data',
+  txt: 'text',
+  log: 'text',
+  rst: 'text',
+  adoc: 'text',
+};
+
+/// 파일명 → 아이콘 카테고리. 확장자가 없거나 표에 없으면 기본 문서 아이콘.
+function fileIconKind(name: string): FileIconKind {
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return 'file';
+  return FILE_ICON_BY_EXT[name.slice(dot + 1).toLowerCase()] ?? 'file';
+}
+
 interface TreeNode {
   name: string;
   path: string;
   is_dir: boolean;
+  /// mdview가 기본으로 다루는 종류인가 (md/markdown/bpmn/form). Rust
+  /// `is_viewable_name`이 유일한 판정 기준이며, false면 트리에서 흐리게
+  /// 표시하고 OS 기본 앱으로 넘긴다.
+  viewable: boolean;
 }
 interface ScanDirResult {
   children: TreeNode[];
@@ -1786,9 +2027,13 @@ const btnReveal = document.querySelector<HTMLButtonElement>('#btn-reveal')!;
 const btnHidden = document.querySelector<HTMLButtonElement>('#btn-hidden')!;
 
 const PROJECT_KEY = 'mdview-project';
-// 숨김(.으로 시작) 항목 표시 여부 — 트리 스캔·전체 펼치기·검색에 함께 적용된다.
-const SHOW_HIDDEN_KEY = 'mdview-show-hidden';
-let showHidden = localStorage.getItem(SHOW_HIDDEN_KEY) === '1';
+// 눈 아이콘 토글 — 두 축을 함께 넓힌다: 숨김(.으로 시작) 항목과, mdview가
+// 직접 렌더하지 못하는 종류의 파일이 함께 트리에 나타난다. 트리 스캔·전체
+// 펼치기·검색에 모두 적용된다 (검색은 md 본문만 뒤지므로 숨김 축만 반응).
+// 키를 예전 'mdview-show-hidden'에서 바꾼 것은 의도적이다 — 의미가 넓어졌으니
+// 기존 사용자가 갑자기 모든 파일을 보게 되는 대신 꺼진 상태로 시작한다.
+const SHOW_ALL_KEY = 'mdview-show-all';
+let showAll = localStorage.getItem(SHOW_ALL_KEY) === '1';
 const SIDEBAR_HIDDEN_KEY = 'mdview-sidebar-hidden';
 let projectRoot: string | null = null;
 const expandedPaths = new Set<string>();
@@ -1801,7 +2046,7 @@ const loadedChildren = new Map<string, TreeNode[]>();
 let treeRefreshSeq = 0;
 
 async function scanDir(dir: string): Promise<ScanDirResult> {
-  return await invoke<ScanDirResult>('scan_dir', { dir, showHidden });
+  return await invoke<ScanDirResult>('scan_dir', { dir, showAll });
 }
 
 /// 사이드바만 숨긴다 — 프로젝트·watcher는 유지되어 트리는 계속 갱신된다.
@@ -2022,7 +2267,7 @@ async function expandDirDeep(path: string, retried = false): Promise<void> {
   const seq = ++treeRefreshSeq;
   let res: DeepScanResult;
   try {
-    res = await invoke<DeepScanResult>('scan_dir_deep', { dir: path, showHidden });
+    res = await invoke<DeepScanResult>('scan_dir_deep', { dir: path, showAll });
   } catch {
     if (seq !== treeRefreshSeq || !projectRoot) return;
     // dir 자체가 사라짐 — 부모까지 정리되도록 전체 갱신.
@@ -2067,12 +2312,41 @@ async function expandDirDeep(path: string, retried = false): Promise<void> {
   renderTree();
 }
 
+/// 빈 폴더 안내 문구. 눈 아이콘이 켜져 있으면 종류로 거른 것이 없으므로
+/// 정말로 파일이 하나도 없다는 뜻이 된다.
+function emptyTreeText(): string {
+  return showAll ? '파일 없음' : 'md/bpmn/form 파일 없음';
+}
+
+/// 파일·폴더 우클릭 메뉴가 공유하는 OS 연동 항목들.
+function osMenuEntries(path: string): CtxEntry[] {
+  return [
+    { label: `${fileManagerName()}에서 보기`, action: () => void revealInFileManager(path) },
+    { label: '터미널에서 열기', action: () => void openInTerminal(path) },
+    { label: '경로 복사', action: () => void copyPathToClipboard(path) },
+  ];
+}
+
 function openDirMenu(e: MouseEvent, path: string): void {
   openCtxMenu(e, [
     { label: '이 폴더에서 검색', action: () => openSearchPanel(path) },
     'sep',
     { label: '하위 전체 펼치기', action: () => void expandDirDeep(path) },
     { label: '다시 읽기', action: () => void refreshDir(path) },
+    'sep',
+    ...osMenuEntries(path),
+  ]);
+}
+
+/// 트리의 파일 행 우클릭 메뉴. `inApp`이 false면 mdview 안에서 렌더할 수 없는
+/// 파일이므로 "mdview로 열기"는 비활성으로 남겨 둔다 (숨기지 않는 것은 이
+/// 메뉴 전체의 관례를 따른 것이다).
+function openFileMenu(e: MouseEvent, path: string, inApp: boolean): void {
+  openCtxMenu(e, [
+    { label: 'mdview로 열기', enabled: inApp, action: () => void openTabFromPath(path) },
+    { label: '기본 앱으로 열기', action: () => void openWithDefaultApp(path) },
+    'sep',
+    ...osMenuEntries(path),
   ]);
 }
 
@@ -2086,7 +2360,7 @@ function renderTree(): void {
   if (!rootChildren || rootChildren.length === 0) {
     const empty = document.createElement('div');
     empty.className = 'tree-empty';
-    empty.textContent = 'md/bpmn/form 파일 없음';
+    empty.textContent = emptyTreeText();
     treeEl.appendChild(empty);
     return;
   }
@@ -2167,29 +2441,30 @@ function buildTreeChildren(nodes: TreeNode[]): HTMLElement {
           emptyWrap.className = 'tree-children';
           const empty = document.createElement('div');
           empty.className = 'tree-empty';
-          empty.textContent = 'md/bpmn/form 파일 없음';
+          empty.textContent = emptyTreeText();
           emptyWrap.appendChild(empty);
           wrap.appendChild(emptyWrap);
         }
         // kids 미로드(로딩 중)면 chevron만 회전한 상태로 대기.
       }
-    } else if (/\.bpmn$/i.test(n.path)) {
-      icon.innerHTML = SVG_BPMN;
-      row.addEventListener('click', () => {
-        openPath(n.path).catch((err) => {
-          console.error('openPath failed:', n.path, err);
-          toast(`열기 실패: ${err}`);
-        });
-      });
-    } else if (/\.form$/i.test(n.path)) {
-      icon.innerHTML = SVG_FORM;
-      row.addEventListener('click', () => {
-        void openTabFromPath(n.path);
-      });
     } else {
-      icon.innerHTML = SVG_FILE;
+      const kind = fileIconKind(n.name);
+      icon.className = 'tree-icon tree-icon--' + kind;
+      icon.innerHTML = FILE_ICON_SVG[kind];
+      // 앱 안에서 렌더되는가. .bpmn은 정식으로 나열되는 종류(viewable)지만
+      // 전용 뷰어가 없어 OS 기본 앱으로 넘기므로 여기서만 예외로 뺀다.
+      const inApp = n.viewable && kind !== 'bpmn';
+      // mdview가 다루지 않는 종류는 흐리게 — 트리에서 한눈에 구분된다.
+      if (!n.viewable) row.classList.add('tree-row--external');
       row.addEventListener('click', () => {
-        void openTabFromPath(n.path);
+        if (inApp) void openTabFromPath(n.path);
+        else void openWithDefaultApp(n.path);
+      });
+      // stopPropagation: window의 contextmenu 정리 리스너가 메뉴를 도로 닫는 것 방지.
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        openFileMenu(e, n.path, inApp);
       });
     }
   }
@@ -2290,14 +2565,14 @@ function flashTreeRow(path: string): void {
 
 btnReveal.addEventListener('click', () => void revealActiveInTree());
 
-// 숨김 항목 표시 토글 — 상태를 저장하고 트리를 다시 스캔하며, 열려 있던
+// 모든 파일 표시 토글 — 상태를 저장하고 트리를 다시 스캔하며, 열려 있던
 // 검색 결과도 새 기준으로 다시 실행한다.
-btnHidden.classList.toggle('active', showHidden);
+btnHidden.classList.toggle('active', showAll);
 btnHidden.addEventListener('click', () => {
-  showHidden = !showHidden;
-  if (showHidden) localStorage.setItem(SHOW_HIDDEN_KEY, '1');
-  else localStorage.removeItem(SHOW_HIDDEN_KEY);
-  btnHidden.classList.toggle('active', showHidden);
+  showAll = !showAll;
+  if (showAll) localStorage.setItem(SHOW_ALL_KEY, '1');
+  else localStorage.removeItem(SHOW_ALL_KEY);
+  btnHidden.classList.toggle('active', showAll);
   if (projectRoot) void refreshTree();
   void runPanelSearch();
 });
@@ -2509,7 +2784,7 @@ async function runPanelSearch(): Promise<void> {
   spStatus.textContent = '검색 중…';
   let res: SearchResult;
   try {
-    res = await invoke<SearchResult>('search_dir', { root: scope, query: q, showHidden });
+    res = await invoke<SearchResult>('search_dir', { root: scope, query: q, showAll });
   } catch (e) {
     if (seq !== spSeq || spScope !== scope) return;
     spStatus.textContent = '';
@@ -2722,3 +2997,4 @@ if (isTauri) {
   _addTab('sample.md', sample);
   void activate('sample.md');
 }
+
