@@ -998,10 +998,39 @@ async function revealInFileManager(path: string): Promise<void> {
   }
 }
 
-/// 해당 경로(파일이면 그 상위 폴더)에서 터미널을 연다.
-async function openInTerminal(path: string): Promise<void> {
+// 설치된 터미널 목록. Rust의 고정 테이블에서 실제로 설치된 항목만 걸러 온다.
+// 시작할 때 한 번만 받아 두는 이유는, 우클릭할 때마다 파일 시스템을 다시
+// 뒤지지 않기 위해서다. 앱이 떠 있는 동안 터미널이 새로 설치되는 경우는
+// 드물고, 그때는 재시작하면 반영된다.
+type TerminalInfo = { id: string; label: string };
+let terminals: TerminalInfo[] = [];
+if (isTauri) {
+  invoke<TerminalInfo[]>('list_terminals')
+    .then((list) => {
+      terminals = list;
+    })
+    .catch(() => {
+      /* 목록을 못 얻으면 빈 배열 그대로 — 메뉴에 기본 항목 하나만 남는다. */
+    });
+}
+
+// 마지막으로 고른 터미널. 다음 우클릭에서 목록 맨 위로 올려 준다.
+const TERMINAL_KEY = 'mdview-terminal';
+
+/// 설치된 터미널을 선호 순서로 돌려준다 — 최근에 고른 것이 맨 앞이다.
+/// 기억해 둔 터미널이 지워졌다면 자연히 목록에서 빠지므로 무시된다.
+function orderedTerminals(): TerminalInfo[] {
+  const last = localStorage.getItem(TERMINAL_KEY);
+  const head = terminals.filter((t) => t.id === last);
+  return [...head, ...terminals.filter((t) => t.id !== last)];
+}
+
+/// 해당 경로(파일이면 그 상위 폴더)에서 터미널을 연다. `id`를 생략하면 Rust가
+/// 설치된 것 중 첫 번째를 고른다.
+async function openInTerminal(path: string, id?: string): Promise<void> {
+  if (id) localStorage.setItem(TERMINAL_KEY, id);
   try {
-    await invoke('open_terminal', { path });
+    await invoke('open_terminal', { path, terminal: id ?? null });
   } catch (err) {
     console.error('open_terminal failed:', path, err);
     toast(`터미널 열기 실패: ${err}`);
@@ -2318,11 +2347,25 @@ function emptyTreeText(): string {
   return showAll ? '파일 없음' : 'md/bpmn/form 파일 없음';
 }
 
+/// 우클릭 메뉴의 터미널 항목들. 설치된 터미널이 둘 이상이면 종류마다 한 줄씩
+/// 펼쳐서 어느 것으로 열지 곧바로 고를 수 있게 한다. 감지된 터미널이 하나뿐이거나
+/// 목록을 아직 받지 못했다면 이름 없이 한 줄만 두어, 예전과 같은 모습을 유지한다.
+function terminalMenuEntries(path: string): CtxEntry[] {
+  const list = orderedTerminals();
+  if (list.length < 2) {
+    return [{ label: '터미널에서 열기', action: () => void openInTerminal(path) }];
+  }
+  return list.map((t) => ({
+    label: `터미널에서 열기 — ${t.label}`,
+    action: () => void openInTerminal(path, t.id),
+  }));
+}
+
 /// 파일·폴더 우클릭 메뉴가 공유하는 OS 연동 항목들.
 function osMenuEntries(path: string): CtxEntry[] {
   return [
     { label: `${fileManagerName()}에서 보기`, action: () => void revealInFileManager(path) },
-    { label: '터미널에서 열기', action: () => void openInTerminal(path) },
+    ...terminalMenuEntries(path),
     { label: '경로 복사', action: () => void copyPathToClipboard(path) },
   ];
 }

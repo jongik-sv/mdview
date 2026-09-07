@@ -405,41 +405,305 @@ fn terminal_dir(path: &str) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("no parent directory: {path}"))
 }
 
-/// Open the OS terminal at `path` (its parent when `path` is a file) — the
-/// file-tree context menu's "터미널에서 열기".
+/// How a terminal is launched once its install path is known.
 ///
-/// The directory is passed as a process ARGUMENT, never interpolated into a
-/// shell command string, so a path containing spaces, quotes or `;` cannot turn
-/// into extra commands.
+/// The directory is ALWAYS its own argv element in every variant — no shell
+/// command string is ever assembled — so a path holding spaces, quotes or `;`
+/// cannot turn into extra commands.
+// 각 플랫폼은 이 중 절반만 쓰지만(macOS는 Mac*, Windows는 Win*), 네 가지를
+// 모두 한자리에 두어야 `terminal_argv`의 인자 구성을 개발 장비 한 대에서
+// 전부 테스트할 수 있다. 그래서 미사용 경고를 끈다.
+#[allow(dead_code)]
+#[derive(Clone, Copy)]
+enum Launch {
+    /// macOS `open -a <bundle> <dir>`. Launch Services hands the folder to the
+    /// app, which works only when the app declares a folder document type
+    /// (`public.directory` / `public.folder`) in its Info.plist.
+    MacOpen,
+    /// macOS `open -na <bundle> --args <flags…> <dir>` for apps that ignore the
+    /// folder document and take a working-directory flag of their own instead.
+    MacArgs(&'static [&'static str]),
+    /// Windows `cmd /C start "" /D <dir> <exe>`. `start`'s /D sets the working
+    /// directory and the console app inherits it; the empty "" fills start's
+    /// title slot, which a quoted path would otherwise be mistaken for.
+    ///
+    /// `start` is needed because a GUI-subsystem Tauri process has no console
+    /// to hand down — spawning the shell directly would leave it invisible.
+    WinStart,
+    /// Windows `cmd /C start "" <exe> <flags…> <dir>` for apps that want the
+    /// directory as their own flag rather than as an inherited cwd.
+    WinArgs(&'static [&'static str]),
+    /// Windows `cmd /C start "" <exe> <flag>=<dir>` for apps that only accept
+    /// the joined form. `format!` still yields ONE argv element, so the
+    /// no-shell-string property holds exactly as it does for the others.
+    WinFlagEq(&'static str),
+}
+
+/// One row of the compiled-in terminal table.
+///
+/// `id` is the ONLY value the frontend ever sends back, and it is used purely
+/// as a lookup key into this table — never as a program name or path. An id
+/// outside the table therefore selects nothing and falls back to the default.
+struct TerminalSpec {
+    id: &'static str,
+    label: &'static str,
+    /// Install locations tried in order; the first that exists wins. A leading
+    /// `~/` is the home directory and a leading `%VAR%` a Windows environment
+    /// variable.
+    probes: &'static [&'static str],
+    launch: Launch,
+}
+
+/// Known terminals, in preference order — the first installed entry is the
+/// default when the frontend names none.
+///
+/// The list is deliberately fixed rather than discovered: the only usable
+/// discovery signal on macOS is the folder document type, which plenty of
+/// non-terminals (folder-opening editors, for one) also declare, so scanning
+/// every installed bundle would fill the menu with wrong entries.
+#[cfg(target_os = "macos")]
+static TERMINALS: &[TerminalSpec] = &[
+    TerminalSpec {
+        id: "terminal",
+        label: "Terminal",
+        // Ventura 이후로는 /System 아래에 있고, 그 이전 macOS는 /Applications에 있다.
+        probes: &[
+            "/System/Applications/Utilities/Terminal.app",
+            "/Applications/Utilities/Terminal.app",
+        ],
+        launch: Launch::MacOpen,
+    },
+    TerminalSpec {
+        id: "iterm",
+        label: "iTerm2",
+        probes: &["/Applications/iTerm.app", "~/Applications/iTerm.app"],
+        launch: Launch::MacOpen,
+    },
+    TerminalSpec {
+        id: "ghostty",
+        label: "Ghostty",
+        probes: &["/Applications/Ghostty.app", "~/Applications/Ghostty.app"],
+        launch: Launch::MacOpen,
+    },
+    TerminalSpec {
+        id: "warp",
+        label: "Warp",
+        probes: &["/Applications/Warp.app", "~/Applications/Warp.app"],
+        launch: Launch::MacOpen,
+    },
+    TerminalSpec {
+        id: "wezterm",
+        label: "WezTerm",
+        probes: &["/Applications/WezTerm.app", "~/Applications/WezTerm.app"],
+        launch: Launch::MacArgs(&["start", "--cwd"]),
+    },
+    TerminalSpec {
+        id: "alacritty",
+        label: "Alacritty",
+        probes: &["/Applications/Alacritty.app", "~/Applications/Alacritty.app"],
+        launch: Launch::MacArgs(&["--working-directory"]),
+    },
+    TerminalSpec {
+        id: "kitty",
+        label: "kitty",
+        probes: &["/Applications/kitty.app", "~/Applications/kitty.app"],
+        launch: Launch::MacArgs(&["--directory"]),
+    },
+    TerminalSpec {
+        id: "hyper",
+        label: "Hyper",
+        probes: &["/Applications/Hyper.app", "~/Applications/Hyper.app"],
+        launch: Launch::MacOpen,
+    },
+];
+
+#[cfg(target_os = "windows")]
+static TERMINALS: &[TerminalSpec] = &[
+    TerminalSpec {
+        id: "wt",
+        label: "Windows Terminal",
+        // An app-execution alias (a reparse point), which `exists()` resolves.
+        probes: &[r"%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe"],
+        // wt does not adopt an inherited cwd for its default profile; -d does.
+        launch: Launch::WinArgs(&["-d"]),
+    },
+    TerminalSpec {
+        id: "powershell",
+        label: "Windows PowerShell",
+        probes: &[r"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"],
+        launch: Launch::WinStart,
+    },
+    TerminalSpec {
+        id: "pwsh",
+        label: "PowerShell 7",
+        probes: &[
+            r"%ProgramFiles%\PowerShell\7\pwsh.exe",
+            r"%ProgramFiles(x86)%\PowerShell\7\pwsh.exe",
+        ],
+        launch: Launch::WinStart,
+    },
+    TerminalSpec {
+        id: "cmd",
+        label: "명령 프롬프트",
+        probes: &[r"%SystemRoot%\System32\cmd.exe"],
+        launch: Launch::WinStart,
+    },
+    TerminalSpec {
+        id: "gitbash",
+        label: "Git Bash",
+        probes: &[
+            r"%ProgramFiles%\Git\git-bash.exe",
+            r"%ProgramFiles(x86)%\Git\git-bash.exe",
+            r"%LOCALAPPDATA%\Programs\Git\git-bash.exe",
+        ],
+        // git-bash.exe opens its own window and takes the directory as
+        // `--cd=<dir>` — the same form Git's own "Git Bash Here" shell
+        // integration uses. The space-separated form is not accepted.
+        launch: Launch::WinFlagEq("--cd"),
+    },
+];
+
+/// Linux has no bundle or fixed-path convention to probe, so the table stays
+/// empty and `open_terminal` keeps using the legacy emulator sweep below.
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+static TERMINALS: &[TerminalSpec] = &[];
+
+/// Look a frontend-supplied id up in the fixed table.
+///
+/// This is the whole of the trust boundary for the id: an unknown string
+/// resolves to `None`, so it can never name a program to run.
+fn terminal_spec_by_id(id: &str) -> Option<&'static TerminalSpec> {
+    TERMINALS.iter().find(|t| t.id == id)
+}
+
+/// Expand a probe pattern into a concrete path, or `None` when the variable it
+/// names is unset (an unexpanded `%VAR%` must never be probed literally).
+fn expand_probe(probe: &str) -> Option<PathBuf> {
+    if let Some(rest) = probe.strip_prefix("~/") {
+        let home = std::env::var_os("HOME")?;
+        return Some(PathBuf::from(home).join(rest));
+    }
+    if let Some(rest) = probe.strip_prefix('%') {
+        let (var, tail) = rest.split_once('%')?;
+        let val = std::env::var_os(var)?;
+        return Some(PathBuf::from(val).join(tail.trim_start_matches('\\')));
+    }
+    Some(PathBuf::from(probe))
+}
+
+/// Where `spec` is installed, or `None` when none of its probes exist.
+fn installed_path(spec: &TerminalSpec) -> Option<PathBuf> {
+    spec.probes
+        .iter()
+        .filter_map(|p| expand_probe(p))
+        .find(|p| p.exists())
+}
+
+/// A terminal the user actually has, as sent to the frontend.
+#[derive(Clone, Debug, Serialize)]
+struct TerminalInfo {
+    id: String,
+    label: String,
+}
+
+/// Every installed table entry, in the table's preference order.
+fn installed_terminals() -> Vec<TerminalInfo> {
+    TERMINALS
+        .iter()
+        .filter(|s| installed_path(s).is_some())
+        .map(|s| TerminalInfo {
+            id: s.id.to_string(),
+            label: s.label.to_string(),
+        })
+        .collect()
+}
+
+/// Which terminals are installed — the file-tree context menu lists one entry
+/// per result. Probing is pure path existence checks, so nothing is executed.
 #[tauri::command]
-async fn open_terminal(path: String) -> Result<(), String> {
-    let dir = terminal_dir(&path)?;
-    tauri::async_runtime::spawn_blocking(move || {
-        #[cfg(target_os = "macos")]
-        {
-            std::process::Command::new("open")
-                .arg("-a")
-                .arg("Terminal")
-                .arg(&dir)
-                .spawn()
-                .map(|_| ())
-                .map_err(|e| e.to_string())
+fn list_terminals() -> Vec<TerminalInfo> {
+    installed_terminals()
+}
+
+/// Build the argv for launching `exe` at `dir`. Pure, so the argument shape can
+/// be tested without spawning anything.
+fn terminal_argv(launch: Launch, exe: &Path, dir: &Path) -> (String, Vec<std::ffi::OsString>) {
+    let mut args: Vec<std::ffi::OsString> = Vec::new();
+    let program = match launch {
+        Launch::MacOpen => {
+            args.push("-a".into());
+            args.push(exe.into());
+            args.push(dir.into());
+            "open"
         }
-        #[cfg(target_os = "windows")]
-        {
-            // `cmd /C start "" /D <dir> cmd` — /D sets the working directory
-            // without a `cd` string, and the empty "" is start's title slot
-            // (otherwise a quoted directory would be taken as the title).
-            std::process::Command::new("cmd")
-                .arg("/C")
-                .arg("start")
-                .arg("")
-                .arg("/D")
-                .arg(&dir)
-                .arg("cmd")
+        Launch::MacArgs(flags) => {
+            // -n: 이미 실행 중이어도 새 인스턴스를 띄워야 --args가 전달된다.
+            args.push("-na".into());
+            args.push(exe.into());
+            args.push("--args".into());
+            args.extend(flags.iter().map(Into::into));
+            args.push(dir.into());
+            "open"
+        }
+        Launch::WinStart => {
+            args.push("/C".into());
+            args.push("start".into());
+            args.push("".into());
+            args.push("/D".into());
+            args.push(dir.into());
+            args.push(exe.into());
+            "cmd"
+        }
+        Launch::WinArgs(flags) => {
+            args.push("/C".into());
+            args.push("start".into());
+            args.push("".into());
+            args.push(exe.into());
+            args.extend(flags.iter().map(Into::into));
+            args.push(dir.into());
+            "cmd"
+        }
+        Launch::WinFlagEq(flag) => {
+            args.push("/C".into());
+            args.push("start".into());
+            args.push("".into());
+            args.push(exe.into());
+            let mut joined = std::ffi::OsString::from(flag);
+            joined.push("=");
+            joined.push(dir);
+            args.push(joined);
+            "cmd"
+        }
+    };
+    (program.to_string(), args)
+}
+
+/// Open a terminal at `path` (its parent when `path` is a file) — the file-tree
+/// context menu's "터미널에서 열기".
+///
+/// `terminal` names an entry of the fixed `TERMINALS` table. An absent or
+/// unknown value falls back to the first installed entry rather than erroring,
+/// so a stale remembered choice (an uninstalled app) still opens something.
+#[tauri::command]
+async fn open_terminal(path: String, terminal: Option<String>) -> Result<(), String> {
+    let dir = terminal_dir(&path)?;
+    let chosen = terminal
+        .as_deref()
+        .and_then(terminal_spec_by_id)
+        .and_then(|s| installed_path(s).map(|p| (s.launch, p)))
+        .or_else(|| {
+            TERMINALS
+                .iter()
+                .find_map(|s| installed_path(s).map(|p| (s.launch, p)))
+        });
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some((launch, exe)) = chosen {
+            let (program, args) = terminal_argv(launch, &exe, &dir);
+            return std::process::Command::new(program)
+                .args(&args)
                 .spawn()
                 .map(|_| ())
-                .map_err(|e| e.to_string())
+                .map_err(|e| e.to_string());
         }
         #[cfg(not(any(target_os = "macos", target_os = "windows")))]
         {
@@ -453,8 +717,8 @@ async fn open_terminal(path: String) -> Result<(), String> {
                     return Ok(());
                 }
             }
-            Err("no terminal emulator found".to_string())
         }
+        Err("no terminal emulator found".to_string())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -1149,6 +1413,7 @@ pub fn run() {
             scan_dir_deep,
             search_dir,
             open_terminal,
+            list_terminals,
             platform_name,
             watch_dir,
             unwatch_dir
@@ -1875,4 +2140,81 @@ mod tests {
     fn file_mtime_errors_on_missing_file() {
         assert!(file_mtime("/nonexistent/x.md".into()).is_err());
     }
+
+    #[test]
+    fn terminal_spec_by_id_rejects_ids_outside_the_table() {
+        // The id is a lookup key, never a program path — anything the table
+        // does not name resolves to None and can launch nothing.
+        for bogus in ["rm", "/bin/sh", "../../bin/sh", "", "Terminal.app", "cmd.exe"] {
+            assert!(
+                terminal_spec_by_id(bogus).is_none(),
+                "unexpected match for {bogus:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_spec_by_id_finds_every_table_entry() {
+        for spec in TERMINALS {
+            let found = terminal_spec_by_id(spec.id).expect("table entry not found by its own id");
+            assert_eq!(found.id, spec.id);
+            assert!(!found.label.is_empty());
+            assert!(!found.probes.is_empty());
+        }
+    }
+
+    #[test]
+    fn terminal_argv_keeps_the_directory_in_one_argument() {
+        // A directory holding spaces, quotes and a semicolon must stay confined
+        // to a single argv element — never spliced into a shell command string,
+        // where the `;` would start a second command.
+        let dir = Path::new("/tmp/a b\"; rm -rf /");
+        let exe = Path::new("/Applications/X.app");
+        let cases = [
+            Launch::MacOpen,
+            Launch::MacArgs(&["--working-directory"]),
+            Launch::WinStart,
+            Launch::WinArgs(&["-d"]),
+            Launch::WinFlagEq("--cd"),
+        ];
+        for launch in cases {
+            let (program, args) = terminal_argv(launch, exe, dir);
+            assert!(!program.is_empty());
+            let carriers: Vec<_> = args
+                .iter()
+                .filter(|a| a.to_string_lossy().contains("rm -rf"))
+                .collect();
+            assert_eq!(
+                carriers.len(),
+                1,
+                "dir must occupy exactly one argv element for {program}: {args:?}"
+            );
+            // 그 하나도 디렉터리 자체이거나 `--flag=<dir>` 형태여야 한다.
+            let carrier = carriers[0].to_string_lossy().into_owned();
+            let d = dir.to_string_lossy();
+            assert!(
+                carrier == d || carrier.ends_with(&format!("={d}")),
+                "directory spliced into another argument: {carrier}"
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_argv_passes_the_executable_through_verbatim() {
+        let exe = Path::new("/Applications/Ghostty.app");
+        let (_, args) = terminal_argv(Launch::MacOpen, exe, Path::new("/tmp"));
+        assert!(args.iter().any(|a| Path::new(a) == exe));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn list_terminals_finds_the_always_present_system_terminal() {
+        let found = installed_terminals();
+        assert!(
+            found.iter().any(|t| t.id == "terminal"),
+            "Terminal.app should always be installed on macOS: {found:?}"
+        );
+    }
 }
+
+
