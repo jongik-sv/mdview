@@ -25,3 +25,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# 소개 덱 생성물 — build_deck.py 로 다시 만들 수 있다 (mdview_doc.json 은 그 출력,
+# .bento.html 은 Bento 앱이 만든 최종 파일). 스크린샷도 저장소에 두지 않는다.
+mdview_doc.json
+*.bento.html
+relaxed-limited.jpeg
