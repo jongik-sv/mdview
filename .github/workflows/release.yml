@@ -49,6 +49,19 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
+      # 릴리스 본문은 CHANGELOG.md의 해당 버전 항목이다. tauri-action이 이 글을
+      # latest.json의 notes 로도 넣기 때문에, 업데이터가 "무엇이 바뀌는지"를
+      # 설치 전에 그대로 보여줄 수 있다.
+      - name: Release notes from CHANGELOG
+        id: notes
+        shell: bash
+        run: |
+          {
+            echo 'body<<RELEASE_NOTES_EOF'
+            node scripts/release-notes.mjs "${{ github.ref_name }}"
+            echo 'RELEASE_NOTES_EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,9 +72,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: mdview ${{ github.ref_name }}
-          releaseBody: |
-            Native builds for macOS (Apple Silicon + Intel) and Windows x64.
-            Download an installer from the assets below.
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

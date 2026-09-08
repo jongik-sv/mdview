@@ -96,7 +96,7 @@
           </svg>
         </button>
         <button class="icon-btn" id="btn-open" title="파일 열기 (+)">+</button>
-        <button class="font-readout" id="version-readout" title="현재 버전 — 클릭하면 업데이트 확인" hidden></button>
+        <button class="font-readout" id="version-readout" title="현재 버전 — 클릭하면 릴리스 노트" hidden></button>
       </div>
     </div>
     <!-- Project mode: md-only file tree (hidden unless a folder is open) -->
@@ -190,6 +190,26 @@
           <line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
       </button>
+    </div>
+    <!-- 릴리스 노트 — 버전 뱃지 클릭, 업데이트로 버전이 오른 뒤 첫 실행 -->
+    <div id="release-notes" hidden>
+      <div id="rn-backdrop"></div>
+      <div id="rn-panel" role="dialog" aria-modal="true" aria-labelledby="rn-title">
+        <div id="rn-head">
+          <span id="rn-title">릴리스 노트</span>
+          <button class="icon-btn" id="rn-close" title="닫기 (Esc)">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+              <line x1="18" y1="6" x2="6" y2="18"/>
+              <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
+        </div>
+        <div id="rn-body" class="markdown-body"></div>
+        <div id="rn-foot">
+          <button class="rn-btn" id="rn-check">업데이트 확인</button>
+          <button class="rn-btn" id="rn-open-releases">GitHub 릴리스 열기</button>
+        </div>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

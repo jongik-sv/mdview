@@ -1462,3 +1462,108 @@ body.pdf-exporting .mermaid-scroll {
   overflow-y: hidden;
   padding: 2px 0;
 }
+
+/* ── 릴리스 노트 모달 ────────────────────────────────────────────────────────
+   버전 뱃지를 누르거나, 업데이트로 버전이 오른 뒤 첫 실행일 때 뜬다. 본문은
+   CHANGELOG.md를 그대로 렌더한 것이라 .markdown-body 타이포를 그대로 쓴다. */
+#release-notes {
+  position: fixed;
+  inset: 0;
+  z-index: 9500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+#release-notes[hidden] {
+  display: none;
+}
+#rn-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+}
+#rn-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(760px, calc(100vw - 48px));
+  max-height: min(80vh, 720px);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+html[data-mdview-theme='light'] #rn-panel {
+  background: #ffffff;
+  border: 1px solid #d0d7de;
+}
+html[data-mdview-theme='dark'] #rn-panel {
+  background: #0d1117;
+  border: 1px solid #30363d;
+}
+#rn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+html[data-mdview-theme='light'] #rn-head {
+  border-bottom: 1px solid #d0d7de;
+  color: #1f2328;
+}
+html[data-mdview-theme='dark'] #rn-head {
+  border-bottom: 1px solid #30363d;
+  color: #e6edf3;
+}
+/* 본문만 스크롤 — 머리글·바닥글은 고정. */
+#rn-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 4px 20px 16px;
+  font-size: 14px;
+}
+#rn-body h2 {
+  font-size: 17px;
+}
+#rn-body h3 {
+  font-size: 14px;
+}
+#rn-foot {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  flex: 0 0 auto;
+}
+html[data-mdview-theme='light'] #rn-foot {
+  border-top: 1px solid #d0d7de;
+}
+html[data-mdview-theme='dark'] #rn-foot {
+  border-top: 1px solid #30363d;
+}
+.rn-btn {
+  padding: 6px 12px;
+  font: inherit;
+  font-size: 13px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+html[data-mdview-theme='light'] .rn-btn {
+  background: #f6f8fa;
+  border: 1px solid #d0d7de;
+  color: #1f2328;
+}
+html[data-mdview-theme='light'] .rn-btn:hover {
+  background: #eaeef2;
+}
+html[data-mdview-theme='dark'] .rn-btn {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #e6edf3;
+}
+html[data-mdview-theme='dark'] .rn-btn:hover {
+  background: #30363d;
+}

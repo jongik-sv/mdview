@@ -11,6 +11,7 @@ import mermaid from 'mermaid';
 import 'katex/dist/katex.min.css';
 import sample from './fixtures/sample.md?raw';
 import { renderMarkdown, replaceFormFence } from './render';
+import { changelogMarkdown, noteFor, releaseUrl, RELEASES_URL } from './changelog';
 import { renderAllFormJs, setFormBlockSaveHandler } from './formjs';
 import {
   initTheme,
@@ -951,6 +952,15 @@ const versionReadout = document.querySelector<HTMLButtonElement>('#version-reado
 // 여러 장 쌓여 "나중에를 눌러도 안 닫히는" 것처럼 보인다.
 let updateCheckBusy = false;
 
+/// 업데이트 다이얼로그에 함께 보여줄 새 버전 요약. GitHub 릴리스 본문(latest.json의
+/// notes)이 그대로 오는데, 길면 다이얼로그가 화면을 넘기므로 잘라 쓴다.
+function updateSummary(body: string | undefined): string {
+  const text = (body ?? '').trim();
+  if (!text) return '';
+  const limit = 700;
+  return '\n\n' + (text.length > limit ? text.slice(0, limit) + '…' : text);
+}
+
 async function checkForUpdates(manual = false): Promise<void> {
   if (updateCheckBusy) return;
   updateCheckBusy = true;
@@ -961,7 +971,9 @@ async function checkForUpdates(manual = false): Promise<void> {
       return;
     }
     const yes = await ask(
-      `새 버전 ${update.version}이 있습니다 (현재 ${update.currentVersion}).\n지금 업데이트할까요?`,
+      `새 버전 ${update.version}이 있습니다 (현재 ${update.currentVersion}).` +
+        updateSummary(update.body) +
+        '\n\n지금 업데이트할까요?',
       { title: 'mdview 업데이트', kind: 'info', okLabel: '업데이트', cancelLabel: '나중에' },
     );
     if (!yes) return;
@@ -976,12 +988,81 @@ async function checkForUpdates(manual = false): Promise<void> {
     updateCheckBusy = false;
   }
 }
+
+// ── 릴리스 노트 ───────────────────────────────────────────────────────────────
+// 빌드에 묶인 CHANGELOG.md를 그대로 보여준다. 버전 뱃지를 누르면 열리고,
+// 업데이트로 버전이 오른 뒤 첫 실행이면 자동으로 한 번 뜬다. 더 오래된 기록과
+// 설치 파일은 GitHub 릴리스 링크로 넘긴다.
+const rnModal = document.querySelector<HTMLDivElement>('#release-notes')!;
+const rnTitle = document.querySelector<HTMLSpanElement>('#rn-title')!;
+const rnBody = document.querySelector<HTMLDivElement>('#rn-body')!;
+const rnCheck = document.querySelector<HTMLButtonElement>('#rn-check')!;
+const rnOpenReleases = document.querySelector<HTMLButtonElement>('#rn-open-releases')!;
+
+// 마지막으로 실행한 버전. 이 값과 지금 버전이 다르면 업데이트가 있었다는 뜻이다.
+const LAST_VERSION_KEY = 'mdview-last-version';
+
+/// [GitHub 릴리스 열기]가 향할 주소. 특정 버전으로 연 모달이면 그 버전의 태그
+/// 페이지로, 그냥 목록을 볼 때는 릴리스 전체 목록으로 간다.
+let rnUrl: string = RELEASES_URL;
+
+function openReleaseNotes(justUpdated: string | null = null): void {
+  rnTitle.textContent = justUpdated
+    ? `v${justUpdated} 로 업데이트되었습니다`
+    : '릴리스 노트';
+  rnUrl = justUpdated && noteFor(justUpdated) ? releaseUrl(justUpdated) : RELEASES_URL;
+  // 제목(H1)은 모달 머리글이 대신하므로 뺀다.
+  const md = changelogMarkdown.replace(/^#\s.*\n/, '');
+  rnBody.innerHTML = renderMarkdown(md).html;
+  rnBody.scrollTop = 0;
+  rnModal.hidden = false;
+}
+
+function closeReleaseNotes(): void {
+  rnModal.hidden = true;
+}
+
+versionReadout.addEventListener('click', () => openReleaseNotes());
+document.querySelector<HTMLButtonElement>('#rn-close')!.addEventListener('click', closeReleaseNotes);
+document.querySelector<HTMLDivElement>('#rn-backdrop')!.addEventListener('click', closeReleaseNotes);
+rnOpenReleases.addEventListener('click', () => {
+  if (!isTauri) return;
+  openUrl(rnUrl).catch((err) => {
+    console.error('openUrl failed:', rnUrl, err);
+    toast('링크 열기 실패: ' + err);
+  });
+});
+rnCheck.addEventListener('click', () => {
+  if (!isTauri) return;
+  closeReleaseNotes();
+  void checkForUpdates(true);
+});
+// Esc — 검색 바 등 다른 Esc 처리보다 먼저 닫는다(capture).
+document.addEventListener(
+  'keydown',
+  (e) => {
+    if (e.key === 'Escape' && !rnModal.hidden) {
+      e.stopPropagation();
+      closeReleaseNotes();
+    }
+  },
+  true,
+);
+
+/// 업데이트 직후라면 새 버전의 릴리스 노트를 한 번 띄운다. 처음 설치라면
+/// (기억된 버전이 없다) 띄우지 않고 지금 버전만 기억한다.
+function showNotesIfUpdated(version: string): void {
+  const last = localStorage.getItem(LAST_VERSION_KEY);
+  localStorage.setItem(LAST_VERSION_KEY, version);
+  if (last && last !== version) openReleaseNotes(version);
+}
+
 if (isTauri) {
   versionReadout.hidden = false;
   void getVersion().then((v) => {
     versionReadout.textContent = 'v' + v;
+    showNotesIfUpdated(v);
   });
-  versionReadout.addEventListener('click', () => void checkForUpdates(true));
   window.setTimeout(() => void checkForUpdates(), 3000);
   window.setInterval(() => void checkForUpdates(), 4 * 60 * 60 * 1000);
 }
