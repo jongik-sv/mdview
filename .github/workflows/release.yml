@@ -53,14 +53,13 @@ jobs:
       # latest.json의 notes 로도 넣기 때문에, 업데이터가 "무엇이 바뀌는지"를
       # 설치 전에 그대로 보여줄 수 있다.
       - name: Release notes from CHANGELOG
-        id: notes
         shell: bash
         run: |
           {
-            echo 'body<<RELEASE_NOTES_EOF'
+            echo 'RELEASE_BODY<<RELEASE_NOTES_EOF'
             node scripts/release-notes.mjs "${{ github.ref_name }}"
             echo 'RELEASE_NOTES_EOF'
-          } >> "$GITHUB_OUTPUT"
+          } >> "$GITHUB_ENV"
 
       - uses: tauri-apps/tauri-action@v0
         env:
@@ -72,7 +71,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: mdview ${{ github.ref_name }}
-          releaseBody: ${{ steps.notes.outputs.body }}
+          releaseBody: ${{ env.RELEASE_BODY }}
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}

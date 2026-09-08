@@ -1006,11 +1006,15 @@ const LAST_VERSION_KEY = 'mdview-last-version';
 /// 페이지로, 그냥 목록을 볼 때는 릴리스 전체 목록으로 간다.
 let rnUrl: string = RELEASES_URL;
 
-function openReleaseNotes(justUpdated: string | null = null): void {
-  rnTitle.textContent = justUpdated
-    ? `v${justUpdated} 로 업데이트되었습니다`
+/// `version`을 주면 그 버전을 위해 연 것으로 보고 제목과 링크를 맞춘다.
+/// `updated`는 이전 버전에서 올라온 경우(true)와 처음 설치한 경우(false)를 가른다.
+function openReleaseNotes(version: string | null = null, updated = false): void {
+  rnTitle.textContent = version
+    ? updated
+      ? `v${version} 로 업데이트되었습니다`
+      : `mdview v${version} — 새로운 점`
     : '릴리스 노트';
-  rnUrl = justUpdated && noteFor(justUpdated) ? releaseUrl(justUpdated) : RELEASES_URL;
+  rnUrl = version && noteFor(version) ? releaseUrl(version) : RELEASES_URL;
   // 제목(H1)은 모달 머리글이 대신하므로 뺀다.
   const md = changelogMarkdown.replace(/^#\s.*\n/, '');
   rnBody.innerHTML = renderMarkdown(md).html;
@@ -1049,12 +1053,19 @@ document.addEventListener(
   true,
 );
 
-/// 업데이트 직후라면 새 버전의 릴리스 노트를 한 번 띄운다. 처음 설치라면
-/// (기억된 버전이 없다) 띄우지 않고 지금 버전만 기억한다.
+/// 이 버전의 릴리스 노트를 아직 본 적이 없다면 한 번 띄운다.
+///
+/// 기억된 버전이 아예 없는 경우도 포함한다. 이 기능이 들어간 버전으로 처음
+/// 올라올 때는 예전 버전이 남긴 기록이 없어서, 정작 이 기능을 알리는 그
+/// 업데이트에서만 아무것도 뜨지 않기 때문이다. 처음 설치한 사람에게는 제목만
+/// "새로운 점"으로 바꿔 한 번 보여준다.
 function showNotesIfUpdated(version: string): void {
   const last = localStorage.getItem(LAST_VERSION_KEY);
   localStorage.setItem(LAST_VERSION_KEY, version);
-  if (last && last !== version) openReleaseNotes(version);
+  if (last === version) return;
+  // 이 빌드의 CHANGELOG에 항목이 없는 버전(개발 중 빌드 등)이면 띄우지 않는다.
+  if (!noteFor(version)) return;
+  openReleaseNotes(version, last !== null);
 }
 
 if (isTauri) {
