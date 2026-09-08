@@ -444,12 +444,42 @@ function refreshSearchAfterRenderedRender(): void {
 let effectiveTheme: EffectiveTheme = 'light';
 let mmdSeq = 0;
 
+/// mermaid가 <body> 끝에 남긴 임시 컨테이너를 지운다.
+///
+/// mermaid.render는 다이어그램을 <body>의 임시 div(`#d<렌더id>`)에 그린 뒤
+/// 문자열만 돌려주고 그 div를 지운다. 그런데 파싱에 실패하면 지우기 직전에
+/// 예외를 던지기 때문에 임시 div가 그대로 남아, 문서 맨 아래에 "Syntax error
+/// in text / mermaid version 11.15.0" 그림이 렌더 실패 개수만큼 쌓인다.
+/// suppressErrorRendering으로 대부분 막히지만, 남는 경로가 하나라도 있으면
+/// 같은 증상이 재발하므로 렌더가 끝날 때마다 한 번 더 훑어 치운다.
+function removeMermaidStrays(): void {
+  document.querySelectorAll('body > div[id^="dmmd-"]').forEach((el) => el.remove());
+}
+
+/// 진행 중인 렌더 회차. 탭 전환·테마 전환·문서 갱신이 겹치면 renderAllMermaid가
+/// 동시에 두 번 돌 수 있는데, 먼저 시작한 회차는 이미 사라진 문서의 블록을
+/// 그리고 있으므로 새 회차가 시작되면 즉시 멈춘다.
+let mmdPass = 0;
+
 async function renderAllMermaid(blocks: string[], theme: 'default' | 'dark'): Promise<void> {
-  mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme });
+  const pass = ++mmdPass;
+  // suppressErrorRendering: 파싱 실패 시 mermaid가 오류 그림을 그리는 대신
+  // 임시 컨테이너를 치우고 예외만 던지게 한다. 오류는 아래 catch가 해당
+  // 블록 자리에 텍스트로 보여 주므로, 어느 블록이 잘못됐는지도 그대로 남는다.
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'loose',
+    suppressErrorRendering: true,
+    theme,
+  });
   const els = document.querySelectorAll<HTMLElement>('.mermaid-block');
   for (const el of els) {
+    if (pass !== mmdPass) break;
     const idx = Number(el.dataset.mermaidIdx);
     const src = blocks[idx];
+    // 문서와 블록 배열이 어긋난 회차(탭을 막 바꾼 순간 등)에서는 src가 없다.
+    // 이때 mermaid.render를 부르면 파싱 예외만 나므로 그냥 건너뛴다.
+    if (typeof src !== 'string') continue;
     try {
       const { svg } = await mermaid.render('mmd-' + mmdSeq++, src);
       el.innerHTML = svg;
@@ -458,6 +488,7 @@ async function renderAllMermaid(blocks: string[], theme: 'default' | 'dark'): Pr
       el.innerHTML = `<pre class="mermaid-error">mermaid error: ${String(e)}</pre>`;
     }
   }
+  removeMermaidStrays();
 }
 
 const MMD_ZOOM_STEP = 1.25;
