@@ -1628,17 +1628,32 @@ function loadSession(): SavedSession | null {
  * 저장된 세션의 탭들을 다시 연다. 삭제된 파일은 조용히 스킵. 복원은 열람
  * 기록이 아니므로 pushRecent 하지 않는다(openTabFromPath를 안 쓰는 이유).
  */
+/// 경로를 디스크에 저장된 표기로 맞춘다. macOS는 외부 열기·드롭·대화상자
+/// 경로의 한글을 NFD로 주는데 트리(read_dir)는 디스크 표기(보통 NFC)라,
+/// 그대로 두면 같은 파일인데도 트리 찾기·하이라이트·탭 중복 판정이 어긋난다.
+async function diskPath(path: string): Promise<string> {
+  if (!/[^\x00-\x7f]/.test(path)) return path; // ASCII는 정규화 차이가 없다
+  try {
+    return await invoke<string>('disk_path', { path });
+  } catch {
+    return path;
+  }
+}
+
 async function restoreSession(): Promise<void> {
   const s = loadSession();
   if (!s || s.paths.length === 0) return;
   restoringSession = true;
   try {
-    for (const p of s.paths) {
+    for (const saved of s.paths) {
+      // 이전 버전이 외부 열기 경로를 NFD 그대로 저장했을 수 있다.
+      const p = await diskPath(saved);
+      if (saved === s.active) s.active = p;
       if (findTab(p)) continue;
       try {
         const c = await invoke<string>('read_file', { path: p });
         const t = _addTab(p, c);
-        t.scrollY = s.scroll[p] ?? 0;
+        t.scrollY = s.scroll[saved] ?? 0;
         t.mtime = (await fetchMtime(p)) ?? 0;
         await invoke('watch_file', { path: p });
       } catch {
@@ -1916,6 +1931,7 @@ async function reloadTab(path: string): Promise<void> {
 
 async function openTabFromPath(path: string): Promise<void> {
   if (!/\.(md|markdown|form)$/i.test(path)) return;
+  path = await diskPath(path);
   const existing = findTab(path);
   if (existing) {
     pushRecent(path);
@@ -2222,6 +2238,7 @@ function showSidebar(): void {
 ///   (드롭은 silent지만 사용자 행동이라 기록한다 — 두 플래그는 관심사가 다르다)
 /// lazy: 루트 한 단계만 스캔하고, 하위는 펼칠 때 scan_dir로 가져온다.
 async function openProject(root: string, silent = false, record = true): Promise<void> {
+  root = await diskPath(root);
   let res: ScanDirResult;
   try {
     res = await scanDir(root);
@@ -2333,7 +2350,11 @@ function isUnderDir(base: string, p: string): boolean {
 /// 하나를 열었다고 프로젝트 루트가 그 하위로 좁혀지면 트리가 쓸모없어진다.
 /// 후보가 여럿이면 히스토리 순서(최신순) 첫 번째 = 가장 최근에 쓰던 프로젝트.
 function bestFolderFor(path: string): string {
-  const recent = loadRecents().find((e) => e.kind === 'folder' && isUnderDir(e.path, path));
+  // 이전 버전이 기록한 NFD 경로도 같은 폴더로 인정한다.
+  const p = path.normalize('NFC');
+  const recent = loadRecents().find(
+    (e) => e.kind === 'folder' && isUnderDir(e.path.normalize('NFC'), p),
+  );
   return recent ? recent.path : parentDir(path);
 }
 

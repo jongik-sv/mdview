@@ -73,6 +73,46 @@ fn get_initial_file() -> Vec<String> {
     out
 }
 
+/// Rewrite `path` into the spelling its components have ON DISK, without
+/// resolving symlinks. macOS hands externally opened files over as file URLs
+/// whose Korean (and other composed) characters are NFD-decomposed, while
+/// `read_dir` — and therefore the project tree — reports names as stored
+/// (usually NFC). APFS resolves both, but the strings differ, so the tree
+/// could not find an externally opened document. Each non-ASCII component is
+/// matched to its directory entry by inode. Anything that fails keeps the
+/// input spelling (never errors).
+#[tauri::command]
+fn disk_path(path: String) -> String {
+    disk_spelling(Path::new(&path)).to_string_lossy().into_owned()
+}
+
+#[cfg(unix)]
+fn disk_spelling(path: &Path) -> PathBuf {
+    use std::os::unix::fs::{DirEntryExt, MetadataExt};
+    let mut out = PathBuf::new();
+    for comp in path.components() {
+        let std::path::Component::Normal(name) = comp else {
+            out.push(comp);
+            continue;
+        };
+        let fixed = name.to_str().filter(|s| !s.is_ascii()).and_then(|_| {
+            let ino = std::fs::symlink_metadata(out.join(name)).ok()?.ino();
+            std::fs::read_dir(&out)
+                .ok()?
+                .flatten()
+                .find(|e| e.ino() == ino)
+                .map(|e| e.file_name())
+        });
+        out.push(fixed.as_deref().unwrap_or(name));
+    }
+    out
+}
+
+#[cfg(not(unix))]
+fn disk_spelling(path: &Path) -> PathBuf {
+    path.to_path_buf()
+}
+
 /// Read a file as a UTF-8 string.
 #[tauri::command]
 fn read_file(path: String) -> Result<String, String> {
@@ -1403,6 +1443,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_initial_file,
+            disk_path,
             read_file,
             write_file,
             watch_file,
@@ -1466,6 +1507,25 @@ mod tests {
 
     fn scan(dir: &Path) -> ScanDirResult {
         scan_dir_inner(dir.to_string_lossy().into_owned(), SCAN_DIR_MAX_ENTRIES, false).unwrap()
+    }
+
+    // macOS 파일 URL은 한글을 NFD로 넘긴다 — 디스크(NFC) 표기로 되돌려야
+    // 트리 경로와 문자열이 일치한다. 심볼릭 링크는 풀지 않는다.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn disk_path_restores_on_disk_spelling() {
+        let t = tempfile::tempdir().unwrap();
+        let nfc_dir = "\u{BB38}\u{C11C}"; // 문서 (NFC)
+        let nfd_dir = "\u{1106}\u{116E}\u{11AB}\u{1109}\u{1165}"; // 문서 (NFD)
+        fs::create_dir(t.path().join(nfc_dir)).unwrap();
+        touch(&t.path().join(nfc_dir).join("a.md"));
+        std::os::unix::fs::symlink(t.path(), t.path().join("link")).unwrap();
+        let input = t.path().join("link").join(nfd_dir).join("a.md");
+        let expected = t.path().join("link").join(nfc_dir).join("a.md");
+        assert_eq!(disk_spelling(&input), expected);
+        // 없는 경로는 입력 그대로.
+        let missing = t.path().join("\u{1100}\u{1161}").join("x.md");
+        assert_eq!(disk_spelling(&missing), missing);
     }
 
     #[test]
